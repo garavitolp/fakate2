@@ -1,0 +1,1736 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="color-scheme" content="dark">
+  <title>FAKATE - Gestor de Reposición</title>
+  <meta name="theme-color" content="#0b0f19">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="FAKATE">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            navy: {
+              bg: '#0b0f19',
+              card: '#151e2e',
+              border: '#1e293b',
+              accent: '#2563eb',
+              input: '#0f172a',
+              inputBorder: '#334155'
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      background-color: #0b0f19;
+      color: #f8fafc;
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    }
+
+    /* ROJO: reservado SOLO para errores y datos ilegibles */
+    @keyframes pulseRed {
+      0%, 100% { border-color: #ef4444; box-shadow: 0 0 0 0 rgba(239,68,68,0.4); }
+      50% { border-color: #f87171; box-shadow: 0 0 0 4px rgba(239,68,68,0.1); }
+    }
+    .field-error, .cell-error {
+      background-color: #450a0a !important;
+      border-color: #ef4444 !important;
+      color: #fecaca !important;
+      animation: pulseRed 2s infinite;
+    }
+
+    /* Grilla a pantalla completa (celular) */
+    .matrix-fullscreen {
+      position: fixed !important;
+      inset: 0 !important;
+      width: 100vw !important;
+      height: 100vh !important;
+      z-index: 100 !important;
+      background-color: #0b0f19 !important;
+      border-radius: 0 !important;
+      border: none !important;
+      overflow-y: auto !important;
+      padding: 1rem !important;
+      margin: 0 !important;
+    }
+
+    select option, select optgroup { background-color: #0f172a; color: #f8fafc; }
+    /* Cuadro de sugerencias (SKU / proveedor): oscuro, chico, con scroll */
+    .sug-box {
+      position: absolute; left: 0; right: 0; z-index: 60; margin-top: 4px;
+      max-height: 260px; overflow-y: auto;
+      background: #1e293b; border: 1px solid #475569; border-radius: 12px;
+      box-shadow: 0 12px 30px rgba(0,0,0,0.5);
+    }
+    .print-only { display: none; }
+
+    /* Impresión A4: fondo blanco, texto negro, sin UI */
+    @media print {
+      @page { size: A4; margin: 12mm; }
+      body { background-color: white !important; color: black !important; padding: 0 !important; }
+      .no-print { display: none !important; }
+      .print-only { display: block !important; }
+      .print-card {
+        page-break-inside: avoid;
+        border: 1px solid #bbb !important;
+        background-color: white !important;
+        color: black !important;
+        margin-bottom: 0.75rem !important;
+        box-shadow: none !important;
+        padding: 0.75rem !important;
+      }
+      .print-text-dark, .print-card * { color: black !important; }
+      .print-border { border-color: #ddd !important; }
+      .print-tag { border: 1px solid #999 !important; background: transparent !important; color: black !important; }
+    }
+  </style>
+</head>
+<body class="min-h-screen p-2 sm:p-4 pb-24">
+
+  <!-- Encabezado solo para impresión -->
+  <div class="print-only" style="margin-bottom:12px">
+    <div style="font-size:18px;font-weight:900"><span class="brand-name">FAKATE</span> — Lista de reposición <span class="brand-branch-print"></span></div>
+    <div id="print-meta" style="font-size:11px"></div>
+  </div>
+
+  <!-- ==================== HEADER ==================== -->
+  <header class="no-print flex items-center justify-between gap-2 mb-3 bg-navy-card px-3 py-2 rounded-2xl border border-navy-border shadow-lg">
+    <div class="flex items-center gap-1.5 min-w-0">
+      <span class="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-800 border border-slate-700 text-sm font-bold text-slate-100 min-w-0"><span class="text-emerald-500">●</span><span id="employee-name" class="truncate"></span></span>
+      <button type="button" data-act="refresh" title="Actualizar datos" class="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-base font-black shrink-0">↻</button>
+      <button type="button" data-act="logout" title="Cambiar de usuario" class="px-2.5 h-8 rounded-full bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-400 text-[11px] font-bold shrink-0">Salir</button>
+    </div>
+    <button type="button" id="btn-toggle-panel" data-act="toggle-panel" class="px-4 py-2 rounded-xl bg-green-600 hover:bg-green-500 text-white text-sm font-black shadow transition shrink-0">+ Nueva carga</button>
+  </header>
+
+
+  <!-- ==================== PANEL DE CARGA ==================== -->
+  <div id="main-forms-container" class="no-print">
+    <div class="max-w-4xl mx-auto mb-3 flex items-center bg-slate-900 rounded-xl p-1 border border-slate-800">
+      <button type="button" id="btn-mode-manual" data-act="mode" data-mode="manual" class="flex-1">✍️ Carga manual</button>
+      <button type="button" id="btn-mode-photo" data-act="mode" data-mode="photo" class="flex-1">📷 Foto (IA)</button>
+    </div>
+
+    <!-- 1. CARGA MANUAL -->
+    <section id="manual-mode-panel" class="bg-navy-card border border-navy-border rounded-2xl shadow-xl p-4 sm:p-6 mb-8 max-w-4xl mx-auto">
+      <div id="edit-banner" class="hidden mb-4 p-3 rounded-xl bg-amber-500/10 border border-amber-500/60 text-amber-200 text-xs font-bold"></div>
+      <div id="manual-editor"></div>
+      <div class="mt-6 flex flex-wrap gap-3 justify-end">
+        <button type="button" id="btn-cancel-edit" data-act="cancel-edit" class="hidden px-5 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-sm transition">Cancelar edición</button>
+        <button type="button" id="btn-save-manual" data-act="save-manual" class="w-full sm:w-auto px-8 py-3 rounded-xl bg-green-600 hover:bg-green-500 text-white font-black text-sm uppercase tracking-widest shadow-lg transition">Guardar producto</button>
+      </div>
+    </section>
+
+    <!-- 2. FOTO (IA) -->
+    <section id="photo-mode-panel" class="hidden bg-navy-card border border-navy-border rounded-2xl shadow-xl p-4 sm:p-6 mb-8 max-w-4xl mx-auto">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-5">
+        <div>
+          <span class="inline-block px-2 py-1 rounded bg-blue-600 text-white text-[10px] font-black uppercase tracking-widest mb-2">Modo foto IA</span>
+          <h2 class="text-xl font-black text-white uppercase tracking-tight">Lectura y validación de la hoja</h2>
+          <p class="text-xs text-slate-400 mt-1">Cada producto leído aparece en la misma grilla que la carga manual. Revisá, corregí y confirmá el SKU de cada uno.</p>
+        </div>
+        <button type="button" data-act="mode" data-mode="manual" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition">← Volver a carga manual</button>
+      </div>
+
+      <div class="flex flex-wrap gap-3 mb-6 pb-6 border-b border-navy-border">
+        <input type="file" accept="image/*" capture="environment" id="camera-input" class="hidden">
+        <button type="button" data-act="pick-photo" class="px-5 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm shadow-lg transition">📸 Subir foto de la hoja</button>
+        <button type="button" data-act="demo-photo" class="px-5 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-sm transition">✨ Cargar ejemplo (3 hojas)</button>
+      </div>
+
+      <div id="ia-error-alert" class="hidden mb-6 p-4 rounded-xl bg-red-950/40 border border-red-500/50 text-red-200 text-sm font-bold"></div>
+      <div id="photo-editors" class="space-y-6"></div>
+
+      <div class="mt-8 pt-6 border-t border-navy-border text-right">
+        <button type="button" id="btn-confirm-ia" data-act="confirm-photo" disabled class="px-8 py-3 rounded-xl bg-green-600 disabled:bg-slate-800 disabled:text-slate-500 disabled:cursor-not-allowed text-white font-black text-sm uppercase tracking-widest transition">Confirmar e ingresar (0)</button>
+      </div>
+    </section>
+  </div>
+
+  <!-- ==================== LISTA FINAL ==================== -->
+  <section id="final-list-section" class="max-w-6xl mx-auto">
+    <div class="no-print bg-navy-card border border-navy-border rounded-xl p-3 mb-4 shadow-lg">
+      <div class="flex items-center justify-between gap-2">
+        <h1 class="text-xl font-black text-white uppercase tracking-tighter">Lista final <span id="list-count" class="text-xs font-bold text-slate-500 normal-case tracking-normal"></span></h1>
+        <button type="button" data-act="print" class="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow transition shrink-0">🖨 Imprimir / PDF</button>
+      </div>
+      <div class="flex items-center gap-2 mt-2">
+        <div class="flex items-center bg-slate-900 rounded-lg p-0.5 border border-slate-800 shrink-0">
+          <button type="button" data-act="global-view" data-mode="COLOR" class="seg-global px-3 py-1.5 rounded-md text-xs font-bold transition">Por color</button>
+          <button type="button" data-act="global-view" data-mode="TALLE" class="seg-global px-3 py-1.5 rounded-md text-xs font-bold transition">Por talle</button>
+        </div>
+        <button type="button" data-act="toggle-filters" class="sm:hidden px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-xs font-bold text-slate-300">Filtros ▾</button>
+        <button type="button" id="btn-trash" data-act="toggle-trash" class="ml-auto px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-bold text-slate-300 transition shrink-0">🗑 0</button>
+      </div>
+      <div id="filters-box" class="hidden sm:flex flex-wrap gap-2 mt-3">
+        <select data-filter="cat" class="filter-sel"></select>
+        <select data-filter="type" class="filter-sel"></select>
+        <select data-filter="prov" class="filter-sel"></select>
+        <select data-filter="zona" class="filter-sel"></select>
+        <select data-filter="size" class="filter-sel"></select>
+        <select data-filter="color" class="filter-sel"></select>
+        <select data-filter="tag" class="filter-sel"></select>
+        <select data-filter="by" class="filter-sel"></select>
+      </div>
+    </div>
+
+    <div id="trash-container" class="hidden no-print mb-6"></div>
+    <div id="cards-container" class="space-y-4"></div>
+    <div id="data-source-badge" class="no-print text-center text-[10px] font-bold text-slate-600 uppercase tracking-widest mt-8"></div>
+  </section>
+
+  <!-- Pantalla de ingreso (nombre + PIN) -->
+  <div id="login-screen" class="no-print hidden fixed inset-0 z-[400] bg-navy-bg flex-col items-center justify-center p-6 overflow-y-auto">
+    <div class="w-full max-w-sm">
+      <div class="text-center mb-8">
+        <img src="data:image/png;base64,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" alt="FAKATE" class="mx-auto w-64 max-w-full h-auto" style="display:block;width:16rem;max-width:100%;height:auto">
+        <div class="brand-branch hidden text-sm font-black uppercase tracking-widest text-slate-300 mt-1"></div>
+        <div class="text-[11px] font-bold uppercase tracking-widest text-slate-500 mt-1">Gestor de reposición</div>
+      </div>
+      <div id="login-step-name">
+        <div class="text-sm font-bold text-slate-300 mb-3 text-center">¿Quién sos?</div>
+        <div id="login-names" class="grid grid-cols-2 gap-2"></div>
+      </div>
+      <div id="login-step-pin" class="hidden">
+        <div class="text-center mb-4"><span class="text-[11px] font-bold uppercase tracking-widest text-slate-500">Hola</span><div id="login-who" class="text-xl font-black text-white"></div></div>
+        <input id="login-pin" type="password" inputmode="numeric" autocomplete="off" maxlength="4" placeholder="PIN" class="w-full text-center text-3xl font-black tracking-[0.6em] bg-navy-input border border-navy-inputBorder rounded-2xl px-3 py-4 text-white focus:outline-none focus:border-navy-accent">
+        <button type="button" data-act="login-submit" class="w-full mt-3 px-6 py-3 rounded-xl bg-green-600 hover:bg-green-500 text-white font-black text-sm uppercase tracking-widest">Entrar</button>
+        <button type="button" data-act="login-back" class="w-full mt-2 px-6 py-2 rounded-xl text-slate-400 hover:text-white text-xs font-bold">← Cambiar de nombre</button>
+      </div>
+      <div id="login-msg" class="mt-4 text-center text-sm font-bold min-h-[1.25rem]"></div>
+      <div id="login-hint" class="mt-6 text-center text-[11px] text-slate-600"></div>
+      <button type="button" id="btn-install" data-act="install" class="hidden w-full mt-6 px-6 py-3 rounded-xl border border-slate-600 text-slate-300 hover:bg-slate-800 font-black text-xs uppercase tracking-widest">⬇ Instalar la app en este celular</button>
+    </div>
+  </div>
+
+  <!-- Cargando / error de conexión al abrir -->
+  <div id="boot-screen" class="no-print hidden fixed inset-0 z-[390] bg-navy-bg flex-col items-center justify-center p-6 text-center">
+    <img src="data:image/png;base64,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" alt="FAKATE" class="w-56 max-w-full h-auto mb-4" style="display:block;width:14rem;max-width:100%;height:auto;margin:0 auto 1rem">
+    <div id="boot-msg" class="text-sm font-bold text-slate-300 max-w-xs"></div>
+    <button type="button" id="boot-retry" data-act="boot-retry" class="hidden mt-5 px-6 py-3 rounded-xl bg-slate-700 hover:bg-slate-600 text-white font-black text-sm">Reintentar</button>
+  </div>
+
+  <!-- Barra de "guardando…" -->
+  <div id="busy-bar" class="no-print hidden fixed top-0 inset-x-0 z-[350] bg-blue-600 text-white text-xs font-black text-center py-1.5 animate-pulse"></div>
+
+  <!-- Modal de confirmación (reemplaza a confirm() del navegador) -->
+  <div id="modal" class="hidden fixed inset-0 z-[200] bg-black/70 items-center justify-center p-4 no-print">
+    <div class="bg-navy-card border border-navy-border rounded-2xl shadow-2xl max-w-md w-full p-5">
+      <p id="modal-msg" class="text-sm text-slate-200 whitespace-pre-line leading-relaxed"></p>
+      <div class="flex justify-end gap-2 mt-5">
+        <button type="button" id="modal-no" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-sm font-bold"></button>
+        <button type="button" id="modal-yes" class="px-4 py-2 rounded-lg bg-green-600 hover:bg-green-500 text-white text-sm font-black"></button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  'use strict';
+  /* ===========================================================================
+     FAKATE — Gestor de Reposición · Frontend (Fase 1)
+     Un solo archivo, sin frameworks. Los datos de prueba (MOCK) tienen la MISMA
+     forma que las pestañas del Google Sheets; en la Fase 2 los trae Apps Script.
+     =========================================================================== */
+
+  /* ---------- 1. DATOS DE PRUEBA (forma del Sheet real) ---------- */
+  const MOCK = {
+    config: { VISTA_POR_DEFECTO: 'COLOR', DIAS_PAPELERA: 30, NOMBRE_NEGOCIO: 'FAKATE', SUCURSAL: 'Modo prueba' },          // pestaña Configuración
+    usuarios: ['Abi', 'Fer', 'Emi', 'Anto', 'Sio', 'Pier'],                          // pestaña Usuarios (Activo = SI)
+    categorias: ['HOMBRE', 'DAMA', 'KIDS', 'BEBE', 'LENCERIA', 'BLANQUERIA'], // pestaña Catálogos
+    colores: ['BLANCO', 'NEGRO', 'MARINO', 'MELANGE', 'VERDE', 'BEIGE', 'GRIS', 'CELESTE', 'TOPO'],
+    maestro: [],                                                           // pestaña Maestro de Productos (1 fila por variante)
+    proveedores: [                                                         // pestaña Base de Proveedores
+      { codigo: 'ROMAY', nombre: 'ROMAY', direccion: 'SALADA - PUNTA MOGOTE', zonas: 'SALADA, PUNTA MOGOTE', whatsapp: '' },
+      { codigo: "DAVICO'S", nombre: "DAVICO'S", direccion: '', zonas: '', whatsapp: '' },
+      { codigo: 'TRIUNFANTE', nombre: 'TRIUNFANTE', direccion: 'URKUPIÑA PASILLO 4', zonas: 'SALADA, URKUPIÑA', whatsapp: '' },
+      { codigo: 'MIDWEST', nombre: 'MIDWEST', direccion: 'SALADA - OCEAN - PASILLO 7 PUESTO 117', zonas: 'SALADA, OCEAN', whatsapp: '(11) 3079 1500' },
+      { codigo: 'RUBELU', nombre: 'RUBELU', direccion: 'SALADA - GALERIA IMPERIO - LOCAL 14 / FLORES - CUENCA 160', zonas: 'SALADA, FLORES', whatsapp: '(11) 5313 2829' },
+      { codigo: 'L & N', nombre: 'L & N', direccion: 'SALADA - GALERIA IMPERIO - PASILLO 3 LOCAL 12', zonas: 'SALADA', whatsapp: '' },
+      { codigo: "GOHITO'S", nombre: "GOHITO'S", direccion: 'SALADA - URKUPIÑA - Pasillo 11 Puesto 35', zonas: 'SALADA, URKUPIÑA', whatsapp: '' }
+    ]
+  };
+  (function buildMockMaestro() {
+    const add = (sku, nombre, categoria, color, talle, stockMinimo, proveedores) =>
+      MOCK.maestro.push({ sku, nombre, categoria, color, talle: String(talle), stockMinimo, proveedores, provPred: '' });
+    // Con stock mínimo, talles sin T
+    ['BLANCO', 'NEGRO'].forEach(c => { for (let t = 1; t <= 10; t++) add('HREM1', 'Remeras Algodon Lisas Adulto', 'HOMBRE', c, t, 10, 'ROMAY'); });
+    // Con stock mínimo distinto por color, talles con T
+    const kids = [4, 6, 8, 10, 12, 14, 16];
+    [['NEGRO', 5], ['MARINO', 15], ['MELANGE', 15], ['VERDE', 8]].forEach(([c, m]) =>
+      kids.forEach(t => add('JOG-ROM-SF', 'Joggin Romay Recto Sin Friza Niño', 'KIDS', c, t, m, 'ROMAY')));
+    [['NEGRO', 5], ['MARINO', 10], ['MELANGE', 10]].forEach(([c, m]) =>
+      kids.forEach(t => add('JOG-ROM-CF', 'Joggin Romay Recto Con Friza Niño', 'KIDS', c, t, m, 'ROMAY, TRIUNFANTE')));
+    // Talles definidos pero SIN stock mínimo
+    ['RATA', 'TOPO', 'NEGRO', 'MARINO'].forEach(c => [38, 40, 42, 44, 46, 48].forEach(t =>
+      add('PAN-REC-RUS', 'Pantalon Recto C/Cierre Algodon Rustico Hombre', 'HOMBRE', c, t, null, 'TRIUNFANTE')));
+    // Producto conocido SIN variantes (la empleada define talles y formato)
+    add('DAV-CARGO', 'Pantalon Jogger Cargo Davico', 'HOMBRE', '', '', null, "DAVICO'S");
+  })();
+
+  /* ---------- 2. UTILIDADES ---------- */
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+  // Mayúsculas y espacios normalizados. NO quita acentos (ÚNICO sigue siendo ÚNICO).
+  const normText = s => String(s ?? '').trim().toUpperCase().replace(/\s+/g, ' ');
+  const stripAccents = s => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '');
+  const splitList = s => String(s ?? '').split(',').map(normText).filter(Boolean);
+  const key = (t, c) => t + '|' + c;
+  const union = (a, b) => [...new Set([...(a || []), ...(b || [])])];
+  const titleCase = s => String(s).toLowerCase().replace(/(^|[\s\/\-(])(\p{L})/gu, (m, a, b) => a + b.toUpperCase());
+
+  // Talle guardado SIN prefijo: "T4" → "4", "Talle S" → "S"
+  function normSize(s) {
+    let t = normText(s).replace(/^TALLE\s*/, '');
+    if (/^T\s?\d/.test(t)) t = t.replace(/^T\s?/, '');
+    else if (/^T[A-ZÚ0-9]+$/.test(t) && LETTERS.includes(t.slice(1).replace('UNICO', 'ÚNICO'))) t = t.slice(1);
+    if (t === 'UNICO') t = 'ÚNICO';
+    return t;
+  }
+  const LETTERS = ['XS', 'S', 'M', 'L', 'XL', 'XXL', '3XL', '4XL', 'ÚNICO'];
+  const SIZE_GROUPS = [
+    ['Más usados', Array.from({ length: 18 }, (_, i) => String(i + 1))],
+    ['Camisa / Pantalón', ['34', '36', '38', '40', '42', '44', '46', '48', '50', '52', '54', '56', '58', '60']],
+    ['Letras', LETTERS]
+  ];
+  const CATALOG_SIZES = SIZE_GROUPS.flatMap(g => g[1]);
+  function sizeRank(t) {
+    if (/^0+$/.test(t) && t.length > 1) return [0, -t.length];
+    if (/^\d+$/.test(t)) return [0, Number(t)];
+    const i = LETTERS.indexOf(t);
+    if (i >= 0) return [1, i];
+    return [2, t];
+  }
+  // Orden VISUAL de talles (el que se usa en la grilla, en "copiar 1° fila" y en la lista)
+  function sortSizes(list) {
+    return [...new Set(list)].sort((a, b) => {
+      const ra = sizeRank(a), rb = sizeRank(b);
+      if (ra[0] !== rb[0]) return ra[0] - rb[0];
+      if (ra[0] === 2) return String(ra[1]).localeCompare(String(rb[1]));
+      return ra[1] - rb[1];
+    });
+  }
+  function orderColors(list) {
+    const uniq = [...new Set(list)];
+    return uniq.sort((a, b) => {
+      const ia = STATE.colorCatalog.indexOf(a), ib = STATE.colorCatalog.indexOf(b);
+      return (ia < 0 ? 9999 : ia) - (ib < 0 ? 9999 : ib);
+    });
+  }
+  // Formato único de talle: siempre con T. Se guarda sin T y se muestra con T.
+  const fmtShort = t => 'T' + t;   // TODOS los talles con T (TÚNICO incluido) para no confundir talle con color   // formato único: siempre con T (T4, T40, TS). Se guarda sin T.
+  const sizeLabel = t => fmtShort(t);
+
+  function levenshtein(a, b) {
+    const m = [];
+    for (let i = 0; i <= b.length; i++) m[i] = [i];
+    for (let j = 0; j <= a.length; j++) m[0][j] = j;
+    for (let i = 1; i <= b.length; i++)
+      for (let j = 1; j <= a.length; j++)
+        m[i][j] = b[i - 1] === a[j - 1] ? m[i - 1][j - 1] : Math.min(m[i - 1][j - 1], m[i][j - 1], m[i - 1][j]) + 1;
+    return m[b.length][a.length];
+  }
+  function toNumOrNull(v) {
+    if (v === null || v === undefined || String(v).trim() === '') return null;
+    const n = Number(v);
+    return isFinite(n) ? n : null;
+  }
+  function fmtDate(iso) {
+    const d = new Date(iso);
+    return d.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit' }) + ' ' +
+      d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+  }
+  // WhatsApp: número en formato local argentino → https://wa.me/549...
+  function waLink(num) {
+    let d = String(num || '').replace(/\D/g, '');
+    if (!d) return '';
+    if (d.startsWith('00')) d = d.slice(2);
+    if (d.startsWith('54')) { if (!d.startsWith('549')) d = '549' + d.slice(2); }
+    else d = '549' + d.replace(/^0/, '');
+    return 'https://wa.me/' + d;
+  }
+  function newLoteId() {
+    const n = new Date(), p = x => String(x).padStart(2, '0');
+    return 'L' + String(n.getFullYear()).slice(2) + p(n.getMonth() + 1) + p(n.getDate()) + '-' + p(n.getHours()) + p(n.getMinutes()) + p(n.getSeconds()) + '-' + Math.random().toString(36).slice(2, 5).toUpperCase();
+  }
+
+  function toast(message, kind = 'ok') {
+    const colors = { ok: 'bg-emerald-600', info: 'bg-slate-700', error: 'bg-red-600' };
+    const el = document.createElement('div');
+    el.className = `no-print fixed bottom-5 right-5 left-5 sm:left-auto px-4 py-2 rounded-lg text-sm font-bold text-white shadow-2xl z-[300] transition-opacity duration-300 opacity-0 ${colors[kind] || colors.ok}`;
+    el.textContent = message;
+    document.body.appendChild(el);
+    setTimeout(() => el.classList.remove('opacity-0'), 10);
+    setTimeout(() => { el.classList.add('opacity-0'); setTimeout(() => el.remove(), 300); }, 3200);
+  }
+  function askConfirm(message, yesText = 'Sí, continuar', noText = 'Volver') {
+    return new Promise(resolve => {
+      const modal = $('modal');
+      $('modal-msg').textContent = message;
+      $('modal-yes').textContent = yesText;
+      $('modal-no').textContent = noText;
+      modal.classList.remove('hidden'); modal.classList.add('flex');
+      const close = val => {
+        modal.classList.add('hidden'); modal.classList.remove('flex');
+        $('modal-yes').onclick = null; $('modal-no').onclick = null;
+        resolve(val);
+      };
+      $('modal-yes').onclick = () => close(true);
+      $('modal-no').onclick = () => close(false);
+    });
+  }
+
+  /* ---------- 3. ESTADO ---------- */
+  const STATE = {
+    config: {}, users: [], categories: [], colorCatalog: [],
+    products: {}, providers: {},
+    employee: '', extraNames: [], token: '', busy: false, lastSync: 0,
+    cards: [],
+    viewMode: 'COLOR',
+    filters: { cat: 'ALL', type: 'ALL', prov: 'ALL', zona: 'ALL', size: 'ALL', color: 'ALL', tag: 'ALL', by: 'ALL' },
+    showTrash: false, inputMode: 'manual', panelVisible: false,
+    lastStructure: null
+  };
+  let manualDraft = null;
+  let photoDrafts = [];
+  let draftSeq = 0;
+
+  /* ---------- 4. CAPA DE DATOS ---------- */
+  // Dentro de Apps Script habla con Code.gs (google.script.run). Si abrís el archivo suelto
+  // (doble clic) funciona en "modo prueba" con datos de ejemplo y sin guardar nada en el Sheet.
+  // ▼▼▼ APP INSTALABLE: pegá entre las comillas la URL de tu app de Apps Script (la que termina en /exec). ▼▼▼
+  const API_URL = 'https://script.google.com/macros/s/AKfycbxMKloLCwmHKwkx0S0-HD41uTRdICpo-t9F1dB5DcblSbXSfX-bnKNFLocRh094RLdO/exec';
+  // ▲▲▲ Dentro de Apps Script esta línea se ignora. ▲▲▲
+  const API_OK = /^https:\/\/script\.google\.com\/macros\/s\/[^/]+\/exec$/.test(API_URL) || /^http:\/\/localhost(:\d+)?\//.test(API_URL);
+  const SESSION_KEY = 'fakate_session_v1';
+  const BRAND_KEY = 'fakate_brand_v1';
+  const Store = {   // el almacenamiento puede estar bloqueado en algunos celulares: siempre con try/catch
+    get() { try { return JSON.parse(localStorage.getItem(SESSION_KEY) || 'null'); } catch (e) { return null; } },
+    set(v) { try { localStorage.setItem(SESSION_KEY, JSON.stringify(v)); } catch (e) { /* sin sesión guardada */ } },
+    clear() { try { localStorage.removeItem(SESSION_KEY); } catch (e) { /* nada */ } }
+  };
+  const clone = o => JSON.parse(JSON.stringify(o));
+  const gas = (fn, args) => new Promise((resolve, reject) => {
+    google.script.run.withSuccessHandler(resolve).withFailureHandler(e => reject(new Error((e && e.message) || String(e))))[fn](...args);
+  });
+  // Modo prueba: guarda las tarjetas solo en memoria
+  const LOCAL = { cards: [] };
+  const Local = {
+    listarUsuarios: async () => ({ ok: true, negocio: MOCK.config.NOMBRE_NEGOCIO, sucursal: MOCK.config.SUCURSAL, usuarios: MOCK.usuarios.slice() }),
+    login: async (n, p) => /^\d{4}$/.test(String(p)) ? { ok: true, token: 'local', user: n, dias: 30 } : { ok: false, code: 'BAD', error: 'PIN incorrecto.' },
+    cargarTodo: async () => Object.assign(clone(MOCK), { ok: true, user: STATE.employee, cards: clone(LOCAL.cards) }),
+    obtenerTarjetas: async () => ({ ok: true, cards: clone(LOCAL.cards) }),
+    guardarTarjetas: async (t, payload) => {
+      payload.cards.slice().reverse().forEach(card => {
+        const i = payload.replaces ? LOCAL.cards.findIndex(c => c.id === payload.replaces) : -1;
+        if (i >= 0) LOCAL.cards[i] = Object.assign(clone(card), { id: LOCAL.cards[i].id, loteId: LOCAL.cards[i].loteId, createdAt: LOCAL.cards[i].createdAt, employee: LOCAL.cards[i].employee });
+        else LOCAL.cards.unshift(clone(card));
+      });
+      return { ok: true, cards: clone(LOCAL.cards) };
+    },
+    borrarTarjeta: async (t, id) => { LOCAL.cards.filter(c => c.id === id).forEach(c => Object.assign(c, { estado: 'PAPELERA', deletedBy: STATE.employee, deletedAt: new Date().toISOString() })); return { ok: true, cards: clone(LOCAL.cards) }; },
+    borrarCarga: async (t, lote) => { LOCAL.cards.filter(c => c.loteId === lote && c.estado === 'ACTIVA').forEach(c => Object.assign(c, { estado: 'PAPELERA', deletedBy: STATE.employee, deletedAt: new Date().toISOString() })); return { ok: true, cards: clone(LOCAL.cards) }; },
+    vaciarPapelera: async () => { const n = LOCAL.cards.filter(c => c.estado === 'PAPELERA').length; LOCAL.cards = LOCAL.cards.filter(c => c.estado !== 'PAPELERA'); return { ok: true, borradas: n, cards: clone(LOCAL.cards) }; },
+    restaurarTarjeta: async (t, id) => { LOCAL.cards.filter(c => c.id === id).forEach(c => Object.assign(c, { estado: 'ACTIVA', deletedBy: '', deletedAt: '' })); return { ok: true, cards: clone(LOCAL.cards) }; }
+  };
+  // App instalable: habla con Apps Script por internet (doPost). Content-Type text/plain = sin "preflight" CORS.
+  async function http(fn, args) {
+    const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), 45000);
+    try {
+      const r = await fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ fn, args }), redirect: 'follow', signal: ctrl.signal });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return await r.json();
+    } finally { clearTimeout(timer); }
+  }
+  const Api = {
+    isAppsScript: () => typeof google !== 'undefined' && !!(google.script && google.script.run),
+    mode: () => Api.isAppsScript() ? 'gas' : (API_OK ? 'http' : 'local'),
+    // Siempre devuelve { ok, ... }. Si no hay conexión: { ok:false, code:'NET' }.
+    async call(fn, ...args) {
+      try {
+        const m = Api.mode();
+        return await (m === 'gas' ? gas(fn, args) : m === 'http' ? http(fn, args) : Local[fn](...args));
+      } catch (e) { return { ok: false, code: 'NET', error: 'No hay conexión con el servidor. Revisá tu internet e intentá de nuevo.' }; }
+    },
+    listarUsuarios: () => Api.call('listarUsuarios'),
+    login: (nombre, pin) => Api.call('login', nombre, pin),
+    cargarTodo: () => Api.call('cargarTodo', STATE.token),
+    obtenerTarjetas: () => Api.call('obtenerTarjetas', STATE.token),
+    guardarTarjetas: payload => Api.call('guardarTarjetas', STATE.token, payload),
+    borrarTarjeta: id => Api.call('borrarTarjeta', STATE.token, id),
+    borrarCarga: lote => Api.call('borrarCarga', STATE.token, lote),
+    restaurarTarjeta: id => Api.call('restaurarTarjeta', STATE.token, id),
+    vaciarPapelera: () => Api.call('vaciarPapelera', STATE.token)
+  };
+
+  function loadMaster(data, first = true) {
+    STATE.config = Object.assign({ VISTA_POR_DEFECTO: 'COLOR', DIAS_PAPELERA: 30 }, data.config || {});
+    if (first) STATE.viewMode = normText(STATE.config.VISTA_POR_DEFECTO) === 'TALLE' ? 'TALLE' : 'COLOR';
+    STATE.users = (data.usuarios || []).map(u => String(u).trim()).filter(Boolean);
+    STATE.categories = (data.categorias || []).map(normText);
+    STATE.colorCatalog = (data.colores || []).map(normText);
+
+    STATE.products = {};
+    (data.maestro || []).forEach(row => {
+      const sku = normText(row.sku);
+      if (!sku) return;
+      const p = STATE.products[sku] || (STATE.products[sku] = {
+        sku, nombre: String(row.nombre || '').trim() || sku, categoria: normText(row.categoria),
+        proveedores: [], provPred: '', variants: [], sizes: [], colors: [], hasMin: false
+      });
+      splitList(row.proveedores).forEach(c => { if (!p.proveedores.includes(c)) p.proveedores.push(c); });
+      if (normText(row.provPred)) p.provPred = normText(row.provPred);
+      const color = normText(row.color), talle = normSize(row.talle);
+      if (color && talle && !p.variants.some(v => v.color === color && v.talle === talle))
+        p.variants.push({ color, talle, min: toNumOrNull(row.stockMinimo) });
+    });
+    Object.values(STATE.products).forEach(p => {
+      p.variants.forEach(v => { if (!STATE.colorCatalog.includes(v.color)) STATE.colorCatalog.push(v.color); });
+      p.sizes = sortSizes(p.variants.map(v => v.talle));
+      p.colors = orderColors(p.variants.map(v => v.color));
+      p.hasMin = p.variants.some(v => v.min !== null);
+    });
+
+    STATE.providers = {};
+    (data.proveedores || []).forEach(r => {
+      const code = normText(r.codigo);
+      if (!code) return;
+      STATE.providers[code] = { code, nombre: String(r.nombre || code).trim(), direccion: String(r.direccion || '').trim(), zonas: splitList(r.zonas), whatsapp: String(r.whatsapp || '').trim() };
+    });
+  }
+
+  /* ---------- 5. BORRADORES (un mismo modelo para carga manual y foto) ---------- */
+  function newDraft(origin, init = {}) {
+    return Object.assign({
+      id: 'd' + (++draftSeq), origin,
+      sku: '', appliedSku: '', skuConfirmed: origin === 'manual',
+      readName: '', skuSuggestion: null, sourceLabel: '',
+      productName: '', category: '', listType: '',
+      tags: [], comment: '', provider: '', hechaPor: STATE.employee,
+      askOther: false, sizes: [], colors: [], qty: {},
+      quickN: 1, fullscreen: false, pendingColor: null,
+      editingCardId: null, showErrors: false
+    }, init);
+  }
+  const getDraft = id => (manualDraft && manualDraft.id === id) ? manualDraft : photoDrafts.find(d => d.id === id);
+  const productOf = d => (d.appliedSku && d.appliedSku === normText(d.sku)) ? (STATE.products[d.appliedSku] || null) : null;
+  const hasQty = d => Object.values(d.qty).some(v => v !== '' && v !== undefined && v !== null);
+  const cellState = raw => (raw === undefined || raw === null || raw === '') ? 'blank' : (typeof raw === 'number' ? 'num' : 'invalid');
+
+  // Aplica los datos del Maestro al SKU escrito. Devuelve true si cambió el producto.
+  function applySku(d) {
+    const sku = normText(d.sku);
+    d.sku = sku;
+    if (sku === d.appliedSku) return false;
+    const prevP = STATE.products[d.appliedSku] || null;
+    const newP = STATE.products[sku] || null;
+    d.appliedSku = sku;
+    if (prevP === newP) return false;
+    if (prevP) {
+      if (d.productName === prevP.nombre) d.productName = d.readName ? titleCase(d.readName) : '';
+      if (prevP.variants.length) {
+        if (!hasQty(d)) { d.sizes = []; d.colors = []; }
+      }
+    }
+    if (newP) {
+      d.productName = newP.nombre;
+      if (newP.categoria) d.category = newP.categoria;
+      if (!d.provider && newP.provPred) d.provider = newP.provPred;
+      if (newP.variants.length) {
+        if (!hasQty(d)) { d.sizes = [...newP.sizes]; d.colors = [...newP.colors]; }
+        else { d.sizes = union(d.sizes, newP.sizes); d.colors = union(d.colors, newP.colors); }
+      }
+    }
+    return true;
+  }
+
+  // Calcula lo que se guardaría. Todo en datos estructurados {talle, color, qty}.
+  function computeResult(d) {
+    const p = productOf(d);
+    const minMap = {};
+    if (p) p.variants.forEach(v => { if (v.min !== null) minMap[key(v.talle, v.color)] = v; });
+    const hasMin = Object.keys(minMap).length > 0;
+    const sizes = sortSizes(d.sizes), colors = orderColors(d.colors);
+    const entered = [];
+    let invalid = 0;
+    sizes.forEach(t => colors.forEach(c => {
+      const raw = d.qty[key(t, c)], st = cellState(raw);
+      if (st === 'invalid') invalid++;
+      else if (st === 'num' && raw > 0) entered.push({ talle: t, color: c, qty: raw });
+    }));
+
+    let counted = null, falta = null, blanks = 0;
+    if (d.listType === 'FALTA') {
+      falta = entered; // carga directa: se ignoran los mínimos
+    } else {
+      counted = entered.slice();
+      if (hasMin) {
+        falta = [];
+        Object.values(minMap).forEach(v => {
+          const k = key(v.talle, v.color);
+          const inGrid = d.sizes.includes(v.talle) && d.colors.includes(v.color);
+          const raw = inGrid ? d.qty[k] : undefined, st = cellState(raw);
+          if (st === 'invalid') return;
+          let q = 0;
+          if (st === 'num') q = raw; else blanks++;      // vacía = 0 (con aviso)
+          if (q === 0) counted.push({ talle: v.talle, color: v.color, qty: 0 });
+          const f = v.min - q;
+          if (f > 0) falta.push({ talle: v.talle, color: v.color, qty: f });
+        });
+      }
+    }
+    const units = entered.reduce((s, e) => s + e.qty, 0);
+    return { counted, falta, blanks, invalid, hasMin, entered: entered.length, units };
+  }
+
+  function validateDraft(d) {
+    const fe = [], msgs = [];
+    if (!d.listType) { fe.push('listType'); msgs.push('Elegí el tipo de lista (STOCK o FALTA).'); }
+    if (!d.category) { fe.push('category'); msgs.push('Elegí la categoría.'); }
+    if (!normText(d.sku)) { fe.push('sku'); msgs.push('Falta el SKU.'); }
+    else if (d.origin === 'foto' && !d.skuConfirmed) { fe.push('sku'); msgs.push('Confirmá que el SKU es el correcto.'); }
+    const r = computeResult(d);
+    if (r.invalid > 0) { fe.push('grid'); msgs.push(`Hay ${r.invalid} celda(s) ilegibles o no numéricas (en rojo).`); }
+    if (r.entered === 0 && !(d.listType === 'STOCK' && r.hasMin)) { fe.push('grid'); msgs.push('Elegí talles y colores y cargá al menos una cantidad mayor a 0.'); }
+    return { ok: msgs.length === 0, fieldErrors: fe, messages: msgs, result: r };
+  }
+
+  // Sugerencia de SKU para la foto: compara el nombre leído con el Maestro y con cargas anteriores.
+  // NUNCA se aplica sola: la empleada tiene que confirmarla.
+  const STOP = new Set(['DE', 'CON', 'C', 'F', 'LA', 'EL', 'Y', 'EN']);
+  const tokens = s => stripAccents(normText(s)).replace(/[^A-Z0-9 ]/g, ' ').split(' ').filter(w => w.length > 1 && !STOP.has(w));
+  function suggestSku(name) {
+    const a = new Set(tokens(name));
+    if (!a.size) return null;
+    const cands = Object.values(STATE.products).map(p => ({ sku: p.sku, nombre: p.nombre, from: 'Maestro' }));
+    STATE.cards.forEach(c => { if (c.readName) cands.push({ sku: c.sku, nombre: c.readName, from: 'carga anterior' }); });
+    let best = null;
+    cands.forEach(c => {
+      const b = new Set(tokens(c.nombre));
+      let inter = 0;
+      a.forEach(w => { if (b.has(w)) inter++; });
+      const score = inter / (a.size + b.size - inter);
+      if (!best || score > best.score) best = Object.assign({ score }, c);
+    });
+    return best && best.score >= 0.34 ? best : null;
+  }
+
+  /* ---------- 6. RENDER DEL EDITOR (compartido manual / foto) ---------- */
+  const C = {
+    label: 'block text-[10px] font-bold uppercase text-slate-400 tracking-wider mb-1.5',
+    input: 'w-full bg-navy-input border border-navy-inputBorder rounded-xl px-3 py-2.5 text-sm font-bold text-white focus:outline-none focus:border-navy-accent transition placeholder-slate-600',
+    smallInput: 'flex-1 min-w-0 bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white uppercase focus:outline-none focus:border-navy-accent',
+    smallBtn: 'px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold transition shrink-0',
+    ghostBtn: 'px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-[11px] font-bold transition',
+    chip: 'px-3 py-1.5 rounded-lg text-xs font-bold transition border',
+    chipOff: 'bg-slate-800 text-slate-400 border-slate-700 hover:bg-slate-700 hover:text-slate-200',
+    sizeOn: 'bg-navy-accent text-white border-blue-400',
+    colorOn: 'bg-sky-700 text-white border-sky-400',
+    stepBtn: 'w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-black text-lg flex items-center justify-center transition shrink-0',
+    stepNum: 'w-5 h-5 rounded-full bg-navy-accent text-white text-[11px] font-black flex items-center justify-center shrink-0',
+    badge: 'inline-block px-2 py-1 rounded-md text-[10px] font-black uppercase border'
+  };
+  const sel = (v, cur) => v === cur ? ' selected' : '';
+
+  function cellClass(raw) {
+    const base = 'w-11 sm:w-12 h-8 rounded-lg text-center text-xs font-black focus:outline-none border transition ';
+    const st = cellState(raw);
+    if (st === 'invalid') return base + 'cell-error';
+    if (st === 'num' && raw > 0) return base + 'bg-navy-accent/25 border-blue-400 text-white';
+    return base + 'bg-navy-input border-navy-inputBorder text-slate-300 placeholder-slate-600';
+  }
+
+  function activeCardsWithSku(sku, exceptId) {
+    return STATE.cards.filter(c => c.estado === 'ACTIVA' && c.sku === sku && c.id !== exceptId);
+  }
+
+  /* Sugerencias acotadas: solo aparecen al escribir y nunca más de 8.
+     Pensado para miles de productos (no se listan todos). */
+  const MAX_SUG = 8;
+  function searchProducts(q) {
+    q = normText(q);
+    if (q.length < 2) return [];
+    const words = tokens(q);
+    const starts = [], contains = [], byName = [];
+    for (const p of Object.values(STATE.products)) {
+      if (p.sku === q) continue;
+      if (p.sku.startsWith(q)) starts.push(p);
+      else if (p.sku.includes(q)) contains.push(p);
+      else if (words.length) { const n = tokens(p.nombre); if (words.every(w => n.some(x => x.startsWith(w)))) byName.push(p); }
+      if (starts.length >= MAX_SUG) break;
+    }
+    return starts.concat(contains, byName).slice(0, MAX_SUG);
+  }
+  function searchProviders(q) {
+    q = normText(q);
+    if (!q) return [];
+    return Object.values(STATE.providers)
+      .filter(p => p.code !== q && (p.code.includes(q) || normText(p.nombre).includes(q)))
+      .sort((a, b) => (b.code.startsWith(q) ? 1 : 0) - (a.code.startsWith(q) ? 1 : 0))
+      .slice(0, MAX_SUG);
+  }
+  function sugListHtml(items, act, dId) {
+    if (!items.length) return '';
+    return items.map(it => `<button type="button" data-sug="1" data-act="${act}" data-d="${dId}" data-v="${esc(it.v)}" class="w-full text-left px-3 py-2 hover:bg-slate-700 border-b border-slate-700/60 last:border-0">
+      <span class="block text-sm font-black text-white">${esc(it.v)}</span>${it.sub ? `<span class="block text-[11px] text-slate-400">${esc(it.sub)}</span>` : ''}</button>`).join('');
+  }
+  function showSug(boxId, html) {
+    const box = $(boxId);
+    if (!box) return;
+    box.innerHTML = html;
+    box.classList.toggle('hidden', !html);
+  }
+  function provInfoHtml(raw) {
+    const code = normText(raw);
+    if (!code) return '';
+    const p = STATE.providers[code];
+    if (!p) return `<div class="text-[11px] text-slate-400">No está en la Base de Proveedores: se guarda tal cual lo escribiste.</div>`;
+    const wa = waLink(p.whatsapp);
+    return `<div class="p-2 rounded-lg bg-slate-900 border border-slate-700 text-[11px] text-slate-300">
+      <b class="text-white">${esc(p.nombre)}</b>${p.direccion ? ' — ' + esc(p.direccion) : ''}${p.zonas.length ? ` <span class="text-slate-500">[${esc(p.zonas.join(', '))}]</span>` : ''}
+      ${wa ? `<a href="${esc(wa)}" target="_blank" rel="noopener" class="ml-1 inline-flex px-2 py-0.5 rounded-md bg-slate-800 border border-slate-600 text-slate-100">💬 WhatsApp</a>` : ''}</div>`;
+  }
+
+  function skuInfoHtml(d) {
+    const sku = normText(d.sku), p = productOf(d);
+    let h = '';
+    const pending = sku && sku !== d.appliedSku;
+    if (d.origin === 'foto') {
+      if (d.skuConfirmed) {
+        h += `<div class="text-[11px] font-bold text-emerald-300 mb-1">✓ SKU confirmado</div>`;
+      } else {
+        h += `<div class="p-2.5 rounded-lg bg-blue-950/60 border border-blue-700 text-[11px] text-blue-100 mb-1.5 space-y-1.5">`;
+        if (d.readName) h += `<div>Leído en la hoja: <b>“${esc(titleCase(d.readName))}”</b></div>`;
+        const s = d.skuSuggestion;
+        if (s && s.sku !== sku) {
+          h += `<div>Sugerencia (${esc(s.from)}): <b>${esc(s.sku)}</b> — ${esc(s.nombre)}</div>
+                <button type="button" data-act="sku-accept" data-d="${d.id}" class="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-black">Sí, es ${esc(s.sku)}</button>
+                <div class="text-blue-300/80">Si no es ese, escribí o elegí otro SKU arriba.</div>`;
+        } else if (!s && !sku) {
+          h += `<div>No encontré un SKU parecido. Escribí o elegí el SKU arriba.</div>`;
+        }
+        if (sku) h += `<button type="button" data-act="sku-confirm" data-d="${d.id}" class="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-black">✓ Confirmar SKU ${esc(sku)}</button>`;
+        h += `</div>`;
+      }
+    }
+    if (pending) {
+      h += `<div class="text-[11px] text-slate-400">Tocá una sugerencia o presioná Enter para buscar el SKU.</div>`;
+    } else if (sku) {
+      let b;
+      if (p && p.hasMin) b = `<span class="${C.badge} bg-emerald-900/40 border-emerald-600 text-emerald-300">✓ Con stock mínimo</span>`;
+      else if (p && p.variants.length) b = `<span class="${C.badge} bg-slate-800 border-slate-600 text-slate-300">Talles definidos · sin stock mínimo</span>`;
+      else if (p) b = `<span class="${C.badge} bg-amber-500/10 border-amber-500 text-amber-300">Sin talles en el Maestro: definilos abajo</span>`;
+      else b = `<span class="${C.badge} bg-amber-500/10 border-amber-500 text-amber-300">Producto nuevo: definí talles y formato</span>`;
+      h += `<div class="flex flex-wrap gap-1">${b}</div>`;
+      const dups = activeCardsWithSku(sku, d.editingCardId);
+      if (dups.length) h += `<div class="mt-1 text-[11px] text-amber-300">⚠ Ya cargado: ${dups.map(c => esc(c.hechaPor) + ' (' + esc(fmtDate(c.createdAt)) + ')').join(' · ')}</div>`;
+    }
+    return h;
+  }
+
+  function errorsHtml(d) {
+    const show = d.origin === 'foto' || d.showErrors;
+    if (!show) return '';
+    const v = validateDraft(d);
+    if (v.ok) return '';
+    return `<div class="mb-4 p-3 rounded-xl bg-red-950/40 border border-red-500/50 text-red-200 text-xs font-bold space-y-0.5">${v.messages.map(m => '<div>• ' + esc(m) + '</div>').join('')}</div>`;
+  }
+
+  function editorHtml(d) {
+    const p = productOf(d);
+    const v = validateDraft(d);
+    const show = d.origin === 'foto' || d.showErrors;
+    const bad = f => (show && v.fieldErrors.includes(f)) ? ' field-error' : '';
+    let h = '';
+
+    if (d.origin === 'foto') {
+      h += `<div class="flex flex-wrap items-center justify-between gap-2 mb-4 pb-3 border-b border-slate-800">
+        <span class="text-slate-400 text-xs font-bold">📄 ${esc(d.sourceLabel)}</span>
+        <button type="button" data-act="discard-draft" data-d="${d.id}" class="${C.ghostBtn}">Descartar este producto</button></div>`;
+    }
+    h += `<div id="${d.id}-errors">${errorsHtml(d)}</div>`;
+
+    // Tipo de lista (botones: los desplegables nativos se ven blancos en Android)
+    const segBtn = (f, v, label, onCls) => `<button type="button" data-act="set-field" data-d="${d.id}" data-f="${f}" data-v="${esc(v)}" class="flex-1 px-3 py-2.5 rounded-lg text-sm font-black transition border ${d[f] === v ? onCls : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-white'}">${label}</button>`;
+    h += `<div class="mb-3"><label class="${C.label}">Tipo de lista</label>
+      <div class="flex gap-2 p-1 rounded-xl border ${bad('listType') ? 'field-error' : 'border-transparent'}">
+        ${segBtn('listType', 'STOCK', '🟣 STOCK · lo que hay', 'bg-purple-900/50 text-purple-200 border-purple-500')}
+        ${segBtn('listType', 'FALTA', '🟢 FALTA · hay que traer', 'bg-emerald-900/50 text-emerald-200 border-emerald-500')}
+      </div></div>`;
+
+    // Categoría (chips)
+    h += `<div class="mb-3"><label class="${C.label}">Categoría</label>
+      <div class="flex flex-wrap gap-1.5 p-1 rounded-xl border ${bad('category') ? 'field-error' : 'border-transparent'}">
+        ${union(STATE.categories, d.category ? [d.category] : []).map(c => `<button type="button" data-act="set-field" data-d="${d.id}" data-f="category" data-v="${esc(c)}" class="${C.chip} ${d.category === c ? C.sizeOn : C.chipOff}">${esc(c)}</button>`).join('')}
+      </div></div>`;
+
+    // SKU + producto
+    h += `<div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+      <div class="relative"><label class="${C.label}">SKU</label>
+        <input id="${d.id}-sku" data-field="sku" data-d="${d.id}" data-sugbox="${d.id}-skusug" autocomplete="off" autocapitalize="characters" spellcheck="false" value="${esc(d.sku)}" placeholder="Escribí el SKU o parte del nombre" class="${C.input} uppercase${bad('sku')}">
+        <div id="${d.id}-skusug" class="sug-box hidden"></div>
+        <div id="${d.id}-skuinfo" class="mt-1.5">${skuInfoHtml(d)}</div>
+      </div>
+      <div><label class="${C.label}">Producto</label>
+        ${p ? `<div class="${C.input} opacity-80">${esc(p.nombre)}</div><div class="text-[10px] text-slate-500 mt-1">Nombre tomado del Maestro.</div>`
+            : `<input id="${d.id}-productName" data-field="productName" data-d="${d.id}" value="${esc(d.productName)}" placeholder="Ej: Remera Lisa Algodón Niño" class="${C.input}">`}
+      </div>
+    </div>`;
+
+    // Quién hizo el conteo/lista (chips) + proveedor (texto libre)
+    const users = union(union(STATE.users, STATE.extraNames), d.hechaPor ? [d.hechaPor] : []);
+    const whoLabel = d.origin === 'foto' ? 'Lista física hecha por' : 'Conteo físico hecho por';
+    h += `<div class="mb-3"><label class="${C.label}">${whoLabel}</label>
+      <div class="flex flex-wrap gap-1.5">${users.map(u => `<button type="button" data-act="set-field" data-d="${d.id}" data-f="hechaPor" data-v="${esc(u)}" class="${C.chip} ${d.hechaPor === u ? C.sizeOn : C.chipOff}">${esc(u)}</button>`).join('')}
+        ${d.askOther ? '' : `<button type="button" data-act="other-open" data-d="${d.id}" class="${C.chip} bg-transparent text-slate-300 border-dashed border-slate-500 hover:bg-slate-800">+ Otra persona</button>`}</div>
+      ${d.askOther ? `<div class="flex gap-2 max-w-sm mt-2">
+        <input id="${d.id}-otherin" data-enter="other-add" data-d="${d.id}" autocomplete="off" autocapitalize="words" placeholder="Nombre de la persona…" class="${C.smallInput} normal-case">
+        <button type="button" data-act="other-add" data-d="${d.id}" class="${C.smallBtn}">Añadir</button>
+        <button type="button" data-act="other-cancel" data-d="${d.id}" class="${C.ghostBtn}">✕</button></div>` : ''}
+    </div>`;
+
+    const own = p ? p.proveedores : [];
+    h += `<div class="mb-3">
+      <div class="relative max-w-md"><label class="${C.label}">Proveedor de esta compra (opcional)</label>
+        <input id="${d.id}-provider" data-field="provider" data-d="${d.id}" data-sugbox="${d.id}-provsug" autocomplete="off" autocapitalize="characters" spellcheck="false" value="${esc(d.provider)}" placeholder="Código o nombre, libre" class="${C.input} uppercase">
+        <div id="${d.id}-provsug" class="sug-box hidden"></div>
+        ${own.length ? `<div class="flex flex-wrap items-center gap-1.5 mt-1.5"><span class="text-[10px] font-bold text-slate-500 uppercase">De este producto:</span>${own.map(c => `<button type="button" data-act="pick-prov" data-d="${d.id}" data-v="${esc(c)}" class="px-2 py-1 rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[11px] font-bold text-slate-200">${esc(c)}${p.provPred === c ? ' ★' : ''}</button>`).join('')}</div>` : ''}
+        <div id="${d.id}-provinfo" class="mt-1.5">${provInfoHtml(d.provider)}</div>
+      </div>
+    </div>`;
+
+    // Etiquetas + comentario
+    h += `<div class="mb-3 bg-slate-900/50 border border-navy-border rounded-xl p-3">
+      <label class="${C.label}">Etiquetas (opcional, ej: URGENTE)</label>
+      <div class="flex gap-2 max-w-md">
+        <input id="${d.id}-tagin" data-enter="add-tag" data-d="${d.id}" placeholder="NUEVA ETIQUETA…" class="${C.smallInput}">
+        <button type="button" data-act="add-tag" data-d="${d.id}" class="px-4 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-black uppercase transition shrink-0">Añadir</button>
+      </div>
+      ${d.tags.length ? `<div class="flex flex-wrap gap-2 mt-2">${d.tags.map(t => `<button type="button" data-act="rm-tag" data-d="${d.id}" data-v="${esc(t)}" class="px-3 py-1 rounded-lg text-[10px] font-black uppercase border bg-amber-900/50 text-amber-400 border-amber-600/50 hover:bg-amber-900">#${esc(t)} ✕</button>`).join('')}</div>` : ''}
+    </div>
+    <input id="${d.id}-comment" data-field="comment" data-d="${d.id}" value="${esc(d.comment)}" placeholder="Nota o comentario (opcional)…" class="w-full bg-slate-900 border border-navy-inputBorder rounded-lg px-4 py-2 text-xs italic text-slate-300 focus:outline-none focus:border-navy-accent placeholder-slate-600 mb-4">`;
+
+    // Variantes
+    h += `<div class="p-3 sm:p-4 bg-navy-input border border-navy-inputBorder rounded-xl">
+      <div class="flex items-center justify-between gap-2 mb-4">
+        <h3 class="text-xs font-black uppercase text-white tracking-widest flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-navy-accent"></span>Variantes del producto</h3>
+        ${d.origin === 'manual' ? `<button type="button" data-act="repeat-last" data-d="${d.id}" class="${C.ghostBtn}">↺ Repetir última estructura</button>` : ''}
+      </div>
+      ${sizesHtml(d, p)}
+      ${colorsHtml(d)}
+      ${gridHtml(d, p)}
+    </div>`;
+    return h;
+  }
+
+  function sizesHtml(d, p) {
+    const chip = t => `<button type="button" data-act="toggle-size" data-d="${d.id}" data-v="${esc(t)}" class="${C.chip} ${d.sizes.includes(t) ? C.sizeOn : C.chipOff}">${esc(fmtShort(t))}</button>`;
+    let groups;
+    if (p && p.variants.length) groups = [['Talles del producto (Maestro)', sortSizes(union(p.sizes, d.sizes))]];
+    else {
+      groups = SIZE_GROUPS.map(g => [g[0], g[1]]);
+      const extra = sortSizes(d.sizes.filter(t => !CATALOG_SIZES.includes(t)));
+      if (extra.length) groups.push(['Otros', extra]);
+    }
+    return `<div class="mb-5">
+      <div class="flex items-center gap-2 mb-2"><span class="${C.stepNum}">1</span><span class="text-xs font-bold uppercase text-slate-400">Elegir talles</span></div>
+      ${groups.map(g => `<div class="mb-2"><div class="text-[10px] font-bold text-slate-500 uppercase mb-1">${esc(g[0])}</div><div class="flex flex-wrap gap-1.5">${g[1].map(chip).join('')}</div></div>`).join('')}
+      <div class="flex gap-2 max-w-sm mt-2">
+        <input id="${d.id}-sizein" data-enter="add-size" data-d="${d.id}" placeholder="OTRO TALLE…" class="${C.smallInput}">
+        <button type="button" data-act="add-size" data-d="${d.id}" class="${C.smallBtn}">Añadir</button>
+      </div>
+    </div>`;
+  }
+
+  function colorsHtml(d) {
+    const all = orderColors(union(STATE.colorCatalog, d.colors));
+    const pc = d.pendingColor;
+    return `<div class="mb-5">
+      <div class="flex items-center gap-2 mb-2"><span class="${C.stepNum}">2</span><span class="text-xs font-bold uppercase text-slate-400">Elegir colores</span></div>
+      <div class="flex flex-wrap gap-1.5 mb-2">${all.map(c => `<button type="button" data-act="toggle-color" data-d="${d.id}" data-v="${esc(c)}" class="${C.chip} ${d.colors.includes(c) ? C.colorOn : C.chipOff}">${esc(c)}</button>`).join('')}</div>
+      <div class="flex gap-2 max-w-sm">
+        <input id="${d.id}-colorin" data-enter="add-color" data-d="${d.id}" placeholder="OTRO COLOR…" class="${C.smallInput}">
+        <button type="button" data-act="add-color" data-d="${d.id}" class="${C.smallBtn}">Añadir</button>
+      </div>
+      ${pc ? `<div class="mt-2 max-w-sm p-2 rounded-lg bg-blue-950/90 border border-blue-500 text-xs">
+          <p class="text-blue-100 font-bold mb-1.5">¿Quisiste decir ${esc(pc.similar)}?</p>
+          <div class="flex gap-2">
+            <button type="button" data-act="color-sim-yes" data-d="${d.id}" class="flex-1 bg-blue-600 hover:bg-blue-500 text-white rounded py-1 font-bold">Sí, usar ${esc(pc.similar)}</button>
+            <button type="button" data-act="color-sim-no" data-d="${d.id}" class="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded py-1 font-bold">No, crear “${esc(pc.value)}”</button>
+          </div></div>` : ''}
+    </div>`;
+  }
+
+  function gridHtml(d, p) {
+    const sizes = sortSizes(d.sizes), colors = orderColors(d.colors);
+    const minMap = {};
+    if (p) p.variants.forEach(v => { if (v.min !== null) minMap[key(v.talle, v.color)] = v.min; });
+    const hasMin = Object.keys(minMap).length > 0;
+    let h = `<div id="${d.id}-gridwrap" class="${d.fullscreen ? 'matrix-fullscreen' : 'bg-slate-900/65 border border-navy-border rounded-2xl p-3 sm:p-4'} space-y-3">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <div class="flex items-center gap-2"><span class="${C.stepNum}">3</span>
+          <div><span class="block text-xs font-extrabold uppercase tracking-wider text-slate-200">Grilla de cantidades</span>
+          <span class="block text-[11px] text-slate-400">Vacías o en 0 no se guardan${hasMin ? ' · en variantes con mínimo, vacía = 0' : ''}. “-” = 0.</span></div></div>
+        <button type="button" data-act="fullscreen" data-d="${d.id}" class="px-3 py-1.5 rounded-lg ${d.fullscreen ? 'bg-slate-700 hover:bg-slate-600' : 'bg-blue-600 hover:bg-blue-500'} text-white font-bold text-xs shadow transition shrink-0">${d.fullscreen ? '✕ Cerrar ampliado' : '⛶ Ampliar'}</button>
+      </div>`;
+    if (!sizes.length || !colors.length) {
+      h += `<div class="p-4 text-center text-slate-500 text-xs italic">Elegí al menos 1 talle y 1 color para habilitar la grilla.</div>`;
+    } else {
+      h += `<div class="flex flex-wrap items-center gap-2">
+          <div class="flex items-center bg-navy-input border border-navy-inputBorder rounded-lg p-0.5">
+            <span class="text-[10px] font-bold uppercase text-slate-400 px-1.5">N:</span>
+            <button type="button" data-act="quickn" data-d="${d.id}" data-delta="-1" class="${C.stepBtn}">−</button>
+            <input id="${d.id}-n" data-field="quickN" data-d="${d.id}" type="text" inputmode="numeric" value="${esc(d.quickN)}" class="w-10 bg-transparent px-1 py-1 text-sm font-extrabold text-center text-white focus:outline-none">
+            <button type="button" data-act="quickn" data-d="${d.id}" data-delta="1" class="${C.stepBtn}">+</button>
+          </div>
+          <button type="button" data-act="copy-first-row" data-d="${d.id}" class="px-3 py-2 rounded-lg bg-blue-950/90 hover:bg-blue-900 border border-blue-700/70 text-[11px] font-bold text-blue-300 transition">📋 Copiar 1° fila a todos los talles</button>
+          <button type="button" data-act="clear-grid" data-d="${d.id}" class="${C.ghostBtn} ml-auto">🧹 Limpiar cantidades</button>
+        </div>
+        <div class="overflow-x-auto rounded-xl border border-navy-border">
+          <table class="w-full text-left border-collapse">
+            <thead><tr>
+              <th class="p-2 border-b border-navy-border sticky left-0 z-20 bg-slate-900 min-w-[84px]"><span class="text-[10px] font-bold uppercase text-slate-500">Talle \\ Color</span></th>
+              ${colors.map(c => `<th class="p-2 text-center border-b border-l border-navy-border min-w-[112px] bg-slate-900/90">
+                <div class="flex flex-col items-center gap-1"><span class="text-xs font-black uppercase text-white">${esc(c)}</span>
+                <button type="button" data-act="fill-col" data-d="${d.id}" data-c="${esc(c)}" class="text-[9px] font-bold text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 px-2 py-0.5 rounded">↓ Columna = N</button></div></th>`).join('')}
+            </tr></thead>
+            <tbody>${sizes.map((t, i) => `<tr>
+              <td class="p-2 border-b border-navy-border bg-slate-900 sticky left-0 z-10">
+                <div class="flex items-center justify-between gap-1.5"><span class="px-2.5 py-1 rounded-lg bg-navy-accent text-white text-xs font-black">${esc(fmtShort(t))}</span>
+                <button type="button" data-act="fill-row" data-d="${d.id}" data-t="${esc(t)}" class="text-[9px] font-bold text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 px-1.5 py-0.5 rounded leading-tight">→ Fila<br>= N</button></div></td>
+              ${colors.map((c, j) => {
+                const k = key(t, c), raw = d.qty[k], m = minMap[k];
+                return `<td class="p-1.5 border-b border-l border-navy-border text-center">
+                  <div class="flex items-center justify-center gap-1">
+                    <button type="button" data-act="step" data-d="${d.id}" data-t="${esc(t)}" data-c="${esc(c)}" data-delta="-1" class="${C.stepBtn}">−</button>
+                    <input type="text" inputmode="numeric" autocomplete="off" id="${d.id}-cell-${i}-${j}" data-cell="1" data-d="${d.id}" data-t="${esc(t)}" data-c="${esc(c)}" value="${esc(raw ?? '')}" placeholder="${m !== undefined ? '0' : '·'}" class="${cellClass(raw)}">
+                    <button type="button" data-act="step" data-d="${d.id}" data-t="${esc(t)}" data-c="${esc(c)}" data-delta="1" class="${C.stepBtn}">+</button>
+                  </div>${m !== undefined ? `<div class="text-[9px] text-slate-500 mt-0.5">mín ${esc(m)}</div>` : ''}</td>`;
+              }).join('')}</tr>`).join('')}
+            </tbody>
+          </table>
+        </div>`;
+    }
+    h += `<div id="${d.id}-preview">${previewHtml(d)}</div></div>`;
+    return h;
+  }
+
+  function linesListHtml(lines, cls = '') {
+    return lines.map(l => `<div class="${cls}"><span class="font-black text-white print-text-dark">${esc(l.label)}:</span> ${esc(l.text)}</div>`).join('');
+  }
+
+  function previewHtml(d) {
+    const r = computeResult(d);
+    const counted = (r.counted || []).filter(e => e.qty > 0);
+    if (!counted.length && !(r.falta && r.falta.length) && !r.blanks) return '';
+    let h = `<div class="mt-1 p-3 bg-slate-950/60 border border-slate-700 rounded-xl text-xs space-y-3">
+      <div class="flex justify-between text-[10px] font-black uppercase tracking-widest text-slate-400"><span>Vista previa</span><span>${r.entered} variante(s) · ${r.units} u.</span></div>`;
+    if (d.listType !== 'FALTA' && counted.length)
+      h += `<div><div class="text-[10px] font-black uppercase tracking-widest text-purple-300 mb-1">Contado (stock)</div><div class="font-mono text-slate-200 leading-relaxed">${linesListHtml(formatLines(counted, 'COLOR'))}</div></div>`;
+    if (r.falta) {
+      const title = d.listType === 'FALTA' ? 'Falta (carga directa)' : 'Faltante calculado (mínimo − contado)';
+      h += `<div><div class="text-[10px] font-black uppercase tracking-widest text-emerald-300 mb-1">${title}</div>
+        <div class="font-mono text-slate-200 leading-relaxed">${r.falta.length ? linesListHtml(formatLines(r.falta, 'COLOR')) : '<span class="text-slate-400 italic">Nada para reponer: todo está en el mínimo o por encima.</span>'}</div></div>`;
+    }
+    if (r.blanks) h += `<div class="text-amber-300 font-bold">⚠ ${r.blanks} variante(s) con stock mínimo sin cargar: se toman como 0.</div>`;
+    return h + '</div>';
+  }
+
+  // Texto final con la estructura de siempre: "Negro: T4 (3), T6 (3)" o "Talle S: Blanco (6), Marino (4)"
+  function formatLines(entries, mode) {
+    const pos = (entries || []).filter(e => e.qty > 0);
+    const q = {};
+    pos.forEach(e => { q[key(e.talle, e.color)] = e.qty; });
+    const out = [];
+    if (mode === 'TALLE') {
+      sortSizes(pos.map(e => e.talle)).forEach(t => {
+        const items = orderColors(pos.filter(e => e.talle === t).map(e => e.color)).map(c => `${titleCase(c)} (${q[key(t, c)]})`);
+        out.push({ label: sizeLabel(t), text: items.join(', ') });
+      });
+    } else {
+      orderColors(pos.map(e => e.color)).forEach(c => {
+        const items = sortSizes(pos.filter(e => e.color === c).map(e => e.talle)).map(t => `${fmtShort(t)} (${q[key(t, c)]})`);
+        out.push({ label: titleCase(c), text: items.join(', ') });
+      });
+    }
+    return out;
+  }
+
+  // Re-render de un editor conservando el foco y la posición del cursor
+  function renderDraft(d) {
+    const ae = document.activeElement;
+    const focusId = ae && ae.id ? ae.id : null;
+    let pos = null;
+    try { pos = ae.selectionStart; } catch (e) { pos = null; }
+    const target = d.origin === 'manual' ? $('manual-editor') : $('editor-' + d.id);
+    if (!target) return;
+    target.innerHTML = editorHtml(d);
+    if (d.origin === 'manual') renderManualChrome(); else updatePhotoConfirm();
+    syncBodyScroll();
+    if (focusId) {
+      const el = $(focusId);
+      if (el && target.contains(el)) {
+        el.focus();
+        try { if (pos !== null && pos !== undefined) el.setSelectionRange(pos, pos); } catch (e) { /* select */ }
+      }
+    }
+  }
+  // Actualización liviana (sin tocar la grilla): vista previa, errores, botón de confirmar
+  function updateLive(d) {
+    const pv = $(d.id + '-preview'); if (pv) pv.innerHTML = previewHtml(d);
+    const er = $(d.id + '-errors'); if (er) er.innerHTML = errorsHtml(d);
+    if (d.origin === 'foto') updatePhotoConfirm();
+  }
+  function syncBodyScroll() {
+    const any = [manualDraft, ...photoDrafts].some(d => d && d.fullscreen);
+    document.body.style.overflow = any ? 'hidden' : '';
+  }
+  function renderManualChrome() {
+    const d = manualDraft;
+    const editing = d.editingCardId ? STATE.cards.find(c => c.id === d.editingCardId) : null;
+    $('edit-banner').classList.toggle('hidden', !editing);
+    if (editing) $('edit-banner').textContent = `✏️ Editando la tarjeta de ${editing.sku} (hecha por ${editing.hechaPor}, ${fmtDate(editing.createdAt)}). Se reemplaza recién al guardar.`;
+    $('btn-cancel-edit').classList.toggle('hidden', !editing);
+    $('btn-save-manual').textContent = editing ? 'Guardar cambios' : 'Guardar producto';
+  }
+
+  function renderPhoto() {
+    const box = $('photo-editors');
+    if (!photoDrafts.length) {
+      box.innerHTML = `<div class="text-center py-10 text-slate-500 text-sm italic">Subí una foto o cargá el ejemplo para ver los resultados acá.</div>`;
+    } else {
+      box.innerHTML = photoDrafts.map(d => `<div class="border border-navy-border rounded-2xl bg-slate-900/50 p-4 shadow-sm"><div id="editor-${d.id}">${editorHtml(d)}</div></div>`).join('');
+    }
+    updatePhotoConfirm();
+    syncBodyScroll();
+  }
+  function updatePhotoConfirm() {
+    const btn = $('btn-confirm-ia'), alertBox = $('ia-error-alert');
+    const bad = photoDrafts.map((d, i) => ({ i, v: validateDraft(d) })).filter(x => !x.v.ok);
+    if (!photoDrafts.length) {
+      btn.disabled = true; btn.textContent = 'Confirmar e ingresar (0)'; alertBox.classList.add('hidden'); return;
+    }
+    if (bad.length) {
+      btn.disabled = true; btn.textContent = 'Corregí los errores para continuar';
+      alertBox.classList.remove('hidden');
+      alertBox.textContent = `Hay ${bad.length} producto(s) con datos en rojo para revisar (producto ${bad.map(x => '#' + (x.i + 1)).join(', ')}).`;
+    } else {
+      btn.disabled = false; btn.textContent = `Confirmar e ingresar (${photoDrafts.length})`;
+      alertBox.classList.add('hidden');
+    }
+  }
+
+  /* ---------- 7. ACCIONES DEL EDITOR ---------- */
+  function addColorToDraft(d, raw) {
+    const val = normText(raw);
+    if (!val) return;
+    if (d.colors.includes(val)) return;
+    let similar = null, min = 99;
+    for (const cat of STATE.colorCatalog) {
+      const dist = levenshtein(stripAccents(val), stripAccents(cat));
+      if (dist === 0) { similar = cat; min = 0; break; }
+      if (dist <= 2 && dist < min) { min = dist; similar = cat; }
+    }
+    if (min === 0) { if (!d.colors.includes(similar)) d.colors.push(similar); d.pendingColor = null; }
+    else if (similar) d.pendingColor = { value: val, similar };
+    else { if (!STATE.colorCatalog.includes(val)) STATE.colorCatalog.push(val); d.colors.push(val); d.pendingColor = null; }
+  }
+
+  async function saveManual() {
+    if (STATE.busy) return;
+    const d = manualDraft;
+    applySku(d);
+    const v = validateDraft(d);
+    if (!v.ok) { d.showErrors = true; renderDraft(d); toast(v.messages[0], 'error'); return; }
+    if (v.result.blanks > 0) {
+      const ok = await askConfirm(`${v.result.blanks} variante(s) de ${normText(d.sku)} tienen stock mínimo y quedaron en blanco.\nSe van a guardar como 0 y sumarán al faltante.\n\n¿Guardar igual?`, 'Sí, guardar', 'Volver a la grilla');
+      if (!ok) return;
+    }
+    const old = d.editingCardId ? STATE.cards.find(c => c.id === d.editingCardId) : null;
+    const card = buildCard(d, v.result, old ? old.loteId : newLoteId(), old ? old.method : 'manual');
+    const res = await withBusy('Guardando…', () => Api.guardarTarjetas({ cards: [card], replaces: d.editingCardId || null }));
+    if (!res.ok) { apiFailed(res, 'No se pudo guardar. Tus datos siguen en el formulario.'); return; }
+    STATE.lastStructure = { sizes: [...d.sizes], colors: [...d.colors], tags: [...d.tags] };
+    setCards(res.cards);
+    toast(d.editingCardId ? 'Cambios guardados' : `¡${normText(d.sku)} guardado en la lista final!`);
+    manualDraft = newDraft('manual');
+    renderDraft(manualDraft);
+    renderList();
+  }
+
+  function buildCard(d, r, loteId, method) {
+    const p = productOf(d);
+    const hasFalta = r.falta && r.falta.length > 0;
+    return {
+      id: 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+      loteId, createdAt: new Date().toISOString(),
+      employee: STATE.employee, hechaPor: d.hechaPor || STATE.employee, method,
+      sku: normText(d.sku), title: p ? p.nombre : (d.productName.trim() || normText(d.sku)),
+      readName: d.readName || '',
+      category: d.category, listType: d.listType,
+      provider: normText(d.provider), tags: [...d.tags], comment: d.comment.trim(),
+      counted: r.counted, falta: r.falta,
+      view: (d.listType === 'FALTA' || hasFalta) ? 'FALTA' : 'STOCK',
+      groupBy: null, estado: 'ACTIVA', deletedBy: '', deletedAt: ''
+    };
+  }
+
+  async function confirmPhoto() {
+    if (STATE.busy) return;
+    photoDrafts.forEach(applySku);
+    const results = photoDrafts.map(validateDraft);
+    if (results.some(v => !v.ok)) { renderPhoto(); toast('Hay datos en rojo para corregir', 'error'); return; }
+    const blanks = results.reduce((s, v) => s + v.result.blanks, 0);
+    if (blanks > 0) {
+      const ok = await askConfirm(`${blanks} variante(s) con stock mínimo quedaron en blanco.\nSe van a guardar como 0 y sumarán al faltante.\n\n¿Ingresar igual?`, 'Sí, ingresar', 'Volver a revisar');
+      if (!ok) return;
+    }
+    const lote = newLoteId();
+    const cards = photoDrafts.map((d, i) => buildCard(d, results[i].result, lote, 'foto'));
+    const res = await withBusy('Guardando…', () => Api.guardarTarjetas({ cards, replaces: null }));
+    if (!res.ok) { apiFailed(res, 'No se pudo guardar la lista. Tus datos siguen en pantalla.'); return; }
+    setCards(res.cards);
+    toast(`¡${cards.length} producto(s) agregados a la lista final!`);
+    photoDrafts = [];
+    renderPhoto();
+    setMode('manual');
+    renderList();
+  }
+
+  function loadDemoPhoto() {
+    $('photo-editors').innerHTML = '<div class="text-center py-6 text-blue-400 font-bold animate-pulse">Leyendo la hoja…</div>';
+    setTimeout(() => {
+      const mk = (init, cells) => {
+        const d = newDraft('foto', init);
+        cells.forEach(([c, pairs]) => {
+          if (!d.colors.includes(c)) d.colors.push(c);
+          pairs.forEach(([t, q]) => { if (!d.sizes.includes(t)) d.sizes.push(t); d.qty[key(t, c)] = q; });
+        });
+        d.productName = titleCase(d.readName);
+        d.skuSuggestion = suggestSku(d.readName);
+        return d;
+      };
+      photoDrafts = [
+        mk({ sourceLabel: 'Producto #1 · leyó “HAY” · firmado por Emi', readName: 'JOGGER CARGO DAVICO', listType: 'STOCK', hechaPor: 'Emi', category: 'HOMBRE' }, [
+          ['NEGRO', [['38', 2], ['50', 3]]],
+          ['BEIGE', [['38', 1], ['42', 1], ['44', 1], ['46', 2], ['48', 1], ['50', 1], ['52', 'ILEGIBLE']]],
+          ['VERDE', [['38', 2], ['40', 1], ['42', 2], ['46', 2], ['50', 2], ['52', 2]]],
+          ['MARINO', [['42', 2], ['50', 1], ['52', 1]]],
+          ['GRIS', [['48', 2], ['50', 1]]]
+        ]),
+        mk({ sourceLabel: 'Producto #2 · leyó “LO QUE HAY”', readName: 'JOGGIN ROMAY RECTO SIN FRIZA', listType: 'STOCK', category: 'KIDS' }, [
+          ['NEGRO', [['4', 1], ['6', 5]]],
+          ['MARINO', [['4', 10], ['6', 3], ['10', 1], ['12', 1]]],
+          ['MELANGE', [['4', 7], ['6', 2], ['8', 15], ['10', 1], ['14', 3], ['16', 3]]]
+        ]),
+        mk({ sourceLabel: 'Producto #3 · no se detectó HAY / FALTA · firmado por Abi', readName: 'BABUCHA ROMAY SIN FRIZA NIÑO', listType: '', hechaPor: 'Abi', category: 'KIDS' }, [
+          ['MARINO', [['4', 2], ['6', 2], ['8', 6], ['10', 7], ['12', 15], ['14', 7], ['16', 6]]]
+        ])
+      ];
+      renderPhoto();
+    }, 600);
+  }
+
+  async function editCard(id) {
+    const c = STATE.cards.find(x => x.id === id);
+    if (!c) return;
+    const md = manualDraft;
+    if (md && md.editingCardId !== id && (hasQty(md) || normText(md.sku))) {
+      const ok = await askConfirm('Hay una carga sin guardar en el formulario.\n¿Descartarla para editar esta tarjeta?', 'Sí, descartar', 'Volver');
+      if (!ok) return;
+    }
+    const d = newDraft('manual', {
+      sku: c.sku, productName: c.title, readName: c.readName, category: c.category, listType: c.listType,
+      tags: [...c.tags], comment: c.comment, provider: c.provider, hechaPor: c.hechaPor,
+      editingCardId: c.id
+    });
+    ((c.listType === 'FALTA' ? c.falta : c.counted) || []).forEach(e => {
+      if (!d.sizes.includes(e.talle)) d.sizes.push(e.talle);
+      if (!d.colors.includes(e.color)) d.colors.push(e.color);
+      if (!STATE.colorCatalog.includes(e.color)) STATE.colorCatalog.push(e.color);
+      if (e.qty > 0) d.qty[key(e.talle, e.color)] = e.qty;
+    });
+    applySku(d);
+    manualDraft = d;
+    setPanelVisible(true);
+    setMode('manual');
+    renderDraft(d);
+    renderList();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    toast('Tarjeta cargada en el formulario para editar', 'info');
+  }
+
+  /* ---------- 8. LISTA FINAL ---------- */
+  function cardView(c) {
+    const f = STATE.filters.type;
+    if (f === 'FALTA' && c.falta) return 'FALTA';
+    if (f === 'STOCK' && c.counted) return 'STOCK';
+    return c.view;
+  }
+  const activeEntries = c => ((cardView(c) === 'FALTA' ? c.falta : c.counted) || []).filter(e => e.qty > 0);
+  const cardTitle = c => (STATE.products[c.sku] && STATE.products[c.sku].nombre) || c.title;
+
+  function cardMatches(c, f) {
+    if (f.cat !== 'ALL' && c.category !== f.cat) return false;
+    if (f.type === 'FALTA' && !c.falta) return false;
+    if (f.type === 'STOCK' && !c.counted) return false;
+    const ents = activeEntries(c);
+    if (f.size !== 'ALL' && !ents.some(e => e.talle === f.size)) return false;
+    if (f.color !== 'ALL' && !ents.some(e => e.color === f.color)) return false;
+    if (f.tag !== 'ALL' && !c.tags.includes(f.tag)) return false;
+    if (f.prov === '__NONE__' && c.provider) return false;
+    if (f.prov !== 'ALL' && f.prov !== '__NONE__' && c.provider !== f.prov) return false;
+    if (f.zona !== 'ALL') { const p = STATE.providers[c.provider]; if (!p || !p.zonas.includes(f.zona)) return false; }
+    if (f.by !== 'ALL' && c.hechaPor !== f.by) return false;
+    return true;
+  }
+
+  function setSelectOptions(name, allLabel, items) {
+    const s = document.querySelector(`[data-filter="${name}"]`);
+    const cur = STATE.filters[name];
+    const valid = cur === 'ALL' || items.some(i => i.v === cur);
+    if (!valid) STATE.filters[name] = 'ALL';
+    s.innerHTML = `<option value="ALL">${esc(allLabel)}</option>` + items.map(i => `<option value="${esc(i.v)}"${sel(i.v, STATE.filters[name])}>${esc(i.l)}</option>`).join('');
+    s.className = 'filter-sel bg-navy-input border rounded-lg px-2 py-1.5 text-xs font-bold focus:outline-none ' +
+      (STATE.filters[name] !== 'ALL' ? 'border-blue-500 text-white' : 'border-navy-inputBorder text-slate-300');
+  }
+
+  function updateFilterOptions(active) {
+    const cats = STATE.categories.filter(c => active.some(x => x.category === c)).concat([...new Set(active.map(x => x.category))].filter(c => !STATE.categories.includes(c)));
+    setSelectOptions('cat', 'Todas las categorías', cats.map(c => ({ v: c, l: c })));
+    setSelectOptions('type', 'Stock y falta', [{ v: 'FALTA', l: 'Solo FALTA (para comprar)' }, { v: 'STOCK', l: 'Solo STOCK (lo que hay)' }]);
+    const provs = [...new Set(active.map(c => c.provider).filter(Boolean))].sort();
+    const provItems = provs.map(c => ({ v: c, l: STATE.providers[c] ? STATE.providers[c].nombre : c }));
+    if (active.some(c => !c.provider)) provItems.unshift({ v: '__NONE__', l: '⚠ Sin proveedor' });
+    setSelectOptions('prov', 'Todos los proveedores', provItems);
+    const zonas = [...new Set(active.flatMap(c => (STATE.providers[c.provider] || { zonas: [] }).zonas))].sort();
+    setSelectOptions('zona', 'Todas las zonas', zonas.map(z => ({ v: z, l: z })));
+    const ents = active.flatMap(activeEntries);
+    setSelectOptions('size', 'Todos los talles', sortSizes(ents.map(e => e.talle)).map(t => ({ v: t, l: 'Talle ' + t })));
+    setSelectOptions('color', 'Todos los colores', orderColors(ents.map(e => e.color)).map(c => ({ v: c, l: titleCase(c) })));
+    setSelectOptions('tag', 'Todas las etiquetas', [...new Set(active.flatMap(c => c.tags))].sort().map(t => ({ v: t, l: '#' + t })));
+    setSelectOptions('by', 'Todas las empleadas', [...new Set(active.map(c => c.hechaPor))].sort().map(u => ({ v: u, l: 'Lista de ' + u })));
+  }
+
+  function providerHtml(c) {
+    if (!c.provider) return `<span class="${C.badge} bg-amber-500/15 border-amber-500 text-amber-300 print-tag">Sin proveedor</span>`;
+    const p = STATE.providers[c.provider];
+    if (!p) return `<span class="font-black text-white print-text-dark">${esc(c.provider)}</span> <span class="text-slate-500 normal-case">(sin datos en la Base)</span>`;
+    const wa = waLink(p.whatsapp);
+    return `<span class="font-black text-white print-text-dark">${esc(p.nombre)}</span>` +
+      (p.direccion ? ` — <span>${esc(p.direccion)}</span>` : '') +
+      (p.zonas.length ? ` <span class="text-slate-500">[${esc(p.zonas.join(', '))}]</span>` : '') +
+      (wa ? ` <a href="${esc(wa)}" target="_blank" rel="noopener" class="no-print inline-flex items-center gap-1 ml-1 px-2 py-0.5 rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-100 normal-case">💬 WhatsApp</a>` : '') +
+      (p.whatsapp ? `<span class="print-only">Tel: ${esc(p.whatsapp)}</span>` : '');
+  }
+
+  function cardHtml(c) {
+    const view = cardView(c);
+    const mode = c.groupBy || STATE.viewMode;
+    const lines = formatLines(activeEntries(c), mode);
+    const both = c.listType === 'STOCK' && c.falta !== null;
+    const editing = manualDraft && manualDraft.editingCardId === c.id;
+    const typeBadge = view === 'FALTA'
+      ? `<span class="${C.badge} bg-emerald-900/30 border-emerald-500 text-emerald-400 print-tag">${c.listType === 'FALTA' ? 'FALTA (hay que traer)' : 'FALTA (a reponer)'}</span>`
+      : `<span class="${C.badge} bg-purple-900/30 border-purple-500 text-purple-400 print-tag">STOCK (lo que hay)</span>`;
+    const toggleBtn = both && STATE.filters.type === 'ALL'
+      ? `<button type="button" data-act="card-toggle" data-id="${c.id}" class="no-print px-2 py-1 rounded bg-slate-800 text-slate-400 hover:text-white text-[10px] font-bold">⇄ Ver ${view === 'FALTA' ? 'STOCK' : 'FALTA'}</button>` : '';
+    const dups = activeCardsWithSku(c.sku, c.id);
+    const loteSize = STATE.cards.filter(x => x.estado === 'ACTIVA' && x.loteId === c.loteId).length;
+    const seg = m => `<button type="button" data-act="card-group" data-id="${c.id}" data-mode="${m}" class="px-2 py-1 rounded text-[10px] font-bold ${mode === m ? 'bg-slate-600 text-white' : 'text-slate-400 hover:text-white'}">${m === 'COLOR' ? 'Color' : 'Talle'}</button>`;
+    let body;
+    if (lines.length) body = `<div class="mt-3 mb-3 space-y-1 text-[13px] text-slate-300 print-text-dark">${linesListHtml(lines)}</div>`;
+    else body = `<div class="mt-3 mb-3 text-xs italic text-slate-400">${view === 'FALTA' ? 'Nada para reponer: todo está en el mínimo o por encima.' : 'Sin unidades contadas.'}</div>`;
+
+    return `<div class="print-card print-border bg-navy-card border ${editing ? 'border-amber-500' : 'border-navy-border'} rounded-2xl p-4 sm:p-5 shadow-md">
+      <div class="flex justify-between items-start gap-3">
+        <div class="min-w-0">
+          <h3 class="text-base font-black text-white uppercase tracking-wide print-text-dark mb-2">${esc(cardTitle(c))}</h3>
+          <div class="flex items-center gap-1.5 flex-wrap">
+            <span class="${C.badge} bg-slate-800 border-slate-700 text-slate-400 print-tag">🏷️ ${esc(c.sku)}</span>
+            ${typeBadge}
+            ${c.tags.map(t => `<span class="${C.badge} bg-amber-900/30 border-amber-600/50 text-amber-400 print-tag">#${esc(t)}</span>`).join('')}
+            ${editing ? `<span class="${C.badge} bg-amber-500/20 border-amber-500 text-amber-300">En edición</span>` : ''}
+            ${toggleBtn}
+          </div>
+        </div>
+        <div class="text-right flex flex-col items-end gap-1 shrink-0">
+          <span class="text-[11px] font-bold text-slate-500 print-text-dark">${esc(fmtDate(c.createdAt))}</span>
+          <span class="text-[10px] font-bold text-slate-300 bg-slate-900 px-2 py-0.5 rounded-full border border-slate-800 print-tag">👤 ${esc(c.hechaPor)} ${c.method === 'foto' ? '📷' : '✍️'}</span>
+          ${c.employee !== c.hechaPor ? `<span class="text-[10px] text-slate-500">cargó: ${esc(c.employee)}</span>` : ''}
+        </div>
+      </div>
+      ${dups.length ? `<div class="mt-2 text-[11px] font-bold text-amber-300 no-print">⚠ También cargado por: ${dups.map(x => esc(x.hechaPor) + ' (' + esc(fmtDate(x.createdAt)) + ')').join(' · ')}</div>` : ''}
+      ${body}
+      ${c.comment ? `<div class="mb-3 px-3 py-2 bg-slate-900/50 rounded-lg border border-slate-800 print-border"><span class="text-xs font-black text-slate-400">Nota:</span> <span class="text-xs italic text-slate-300">${esc(c.comment)}</span></div>` : ''}
+      <div class="pt-3 border-t border-navy-border print-border flex flex-wrap items-center justify-between gap-3">
+        <div class="text-[11px] font-bold text-slate-400 print-text-dark uppercase leading-relaxed min-w-0"><span class="text-slate-500">Prov:</span> ${providerHtml(c)}</div>
+        <div class="flex items-center gap-2 no-print flex-wrap">
+          <div class="flex items-center bg-slate-900 rounded-md p-0.5 border border-slate-800">${seg('COLOR')}${seg('TALLE')}</div>
+          ${editing ? '' : `<button type="button" data-act="card-edit" data-id="${c.id}" class="px-3 py-1.5 rounded-lg border border-yellow-900/50 hover:bg-yellow-900/30 text-yellow-500 text-[10px] font-black uppercase">Editar</button>
+          <button type="button" data-act="card-delete" data-id="${c.id}" class="px-3 py-1.5 rounded-lg border border-slate-700 hover:bg-slate-800 text-slate-300 text-[10px] font-black uppercase">Borrar</button>
+          ${loteSize > 1 ? `<button type="button" data-act="lote-delete" data-id="${c.id}" class="px-3 py-1.5 rounded-lg border border-slate-700 hover:bg-slate-800 text-slate-400 text-[10px] font-black uppercase">Borrar carga (${loteSize})</button>` : ''}`}
+        </div>
+      </div>
+    </div>`;
+  }
+
+  function renderList() {
+    const active = STATE.cards.filter(c => c.estado === 'ACTIVA');
+    const trash = STATE.cards.filter(c => c.estado === 'PAPELERA');
+    $('btn-trash').textContent = `🗑 ${trash.length}`;
+    $('btn-trash').title = 'Papelera';
+    document.querySelectorAll('.seg-global').forEach(b => {
+      b.className = 'seg-global px-3 py-1.5 rounded-md text-xs font-bold transition ' + (b.dataset.mode === STATE.viewMode ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white');
+    });
+    updateFilterOptions(active);
+    const list = active.filter(c => cardMatches(c, STATE.filters));
+    $('list-count').textContent = active.length ? `(${list.length} de ${active.length})` : '';
+
+    const box = $('cards-container');
+    if (!active.length) box.innerHTML = `<div class="text-center py-12 text-slate-600 text-sm font-bold uppercase tracking-widest">La lista final está vacía. Cargá productos arriba.</div>`;
+    else if (!list.length) box.innerHTML = `<div class="text-center py-12 text-slate-600 text-sm font-bold uppercase tracking-widest">No hay resultados para los filtros elegidos.</div>`;
+    else {
+      const cats = STATE.categories.concat([...new Set(list.map(c => c.category))].filter(c => !STATE.categories.includes(c)));
+      box.innerHTML = cats.map(cat => {
+        const group = list.filter(c => c.category === cat);
+        if (!group.length) return '';
+        return `<div class="flex items-center gap-3 mt-6 mb-3"><div class="w-1 h-6 bg-blue-600 rounded"></div><h2 class="text-lg font-black text-white uppercase tracking-wider print-text-dark">${esc(cat)}</h2></div>` + group.map(cardHtml).join('');
+      }).join('');
+    }
+
+    const tb = $('trash-container');
+    tb.classList.toggle('hidden', !STATE.showTrash);
+    if (STATE.showTrash) {
+      tb.innerHTML = `<div class="bg-navy-card border border-navy-border rounded-xl p-4">
+        <div class="flex justify-between items-center mb-3"><h2 class="text-sm font-black uppercase text-slate-300">🗑 Papelera</h2>
+        <span class="text-[10px] text-slate-500">Se vacía sola a los ${esc(STATE.config.DIAS_PAPELERA)} días.</span></div>
+        ${trash.length ? `<button type="button" data-act="trash-empty" class="w-full mb-2 px-3 py-2 rounded-lg border border-slate-600 hover:bg-slate-800 text-slate-300 text-[11px] font-black uppercase">Vaciar papelera ahora (${trash.length})</button>` : ''}
+        ${trash.length ? trash.map(c => `<div class="flex flex-wrap items-center justify-between gap-2 py-2 border-t border-slate-800 text-xs">
+            <div class="min-w-0"><b class="text-slate-200">${esc(cardTitle(c))}</b> <span class="text-slate-500">· ${esc(c.sku)} · hecha por ${esc(c.hechaPor)} (${esc(fmtDate(c.createdAt))})</span>
+            <div class="text-slate-500">Borrada por ${esc(c.deletedBy)} el ${esc(fmtDate(c.deletedAt))}</div></div>
+            <button type="button" data-act="card-restore" data-id="${c.id}" class="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-[10px] font-black uppercase">Restaurar</button></div>`).join('')
+          : '<div class="text-xs text-slate-500 italic">La papelera está vacía.</div>'}
+      </div>`;
+    }
+  }
+
+  function printList() {
+    const f = STATE.filters;
+    const parts = Object.keys(f).filter(k => f[k] !== 'ALL').map(k => {
+      const s = document.querySelector(`[data-filter="${k}"]`);
+      return s && s.selectedOptions[0] ? s.selectedOptions[0].textContent : f[k];
+    });
+    $('print-meta').textContent = `Impreso: ${fmtDate(new Date().toISOString())}` + (parts.length ? ' · Filtros: ' + parts.join(' · ') : '');
+    window.print();
+  }
+
+  /* ---------- 9. MODO / PANEL ---------- */
+  function setMode(mode) {
+    STATE.inputMode = mode;
+    const on = 'flex-1 px-3 py-2 rounded-lg text-sm font-bold transition-all bg-slate-700 text-white shadow';
+    const off = 'flex-1 px-3 py-2 rounded-lg text-sm font-bold transition-all text-slate-400 hover:text-white';
+    $('btn-mode-manual').className = mode === 'manual' ? on : off;
+    $('btn-mode-photo').className = mode === 'photo' ? on : off;
+    $('manual-mode-panel').classList.toggle('hidden', mode !== 'manual');
+    $('photo-mode-panel').classList.toggle('hidden', mode !== 'photo');
+  }
+  function setPanelVisible(v) {
+    STATE.panelVisible = v;
+    $('main-forms-container').style.display = v ? '' : 'none';
+    $('btn-toggle-panel').textContent = v ? '✕ Cerrar carga' : '+ Nueva carga';
+    $('btn-toggle-panel').className = 'px-4 py-2 rounded-xl text-sm font-black shadow transition shrink-0 ' + (v ? 'bg-slate-700 hover:bg-slate-600 text-white' : 'bg-green-600 hover:bg-green-500 text-white');
+  }
+
+  /* ---------- 10. EVENTOS (delegados: no hay onclick con texto incrustado) ---------- */
+  async function handleAction(act, el) {
+    const d = el.dataset.d ? getDraft(el.dataset.d) : null;
+    const cardId = el.dataset.id;
+    switch (act) {
+      case 'mode': setMode(el.dataset.mode); setPanelVisible(true); break;
+      case 'toggle-panel': setPanelVisible(!STATE.panelVisible); break;
+      case 'save-manual': saveManual(); break;
+      case 'cancel-edit': manualDraft = newDraft('manual'); renderDraft(manualDraft); renderList(); break;
+      case 'pick-photo': $('camera-input').click(); break;
+      case 'demo-photo': loadDemoPhoto(); break;
+      case 'confirm-photo': confirmPhoto(); break;
+
+      case 'toggle-size': {
+        const t = el.dataset.v;
+        d.sizes = d.sizes.includes(t) ? d.sizes.filter(x => x !== t) : d.sizes.concat(t);
+        renderDraft(d); break;
+      }
+      case 'add-size': {
+        const inp = $(d.id + '-sizein'), t = normSize(inp.value);
+        if (t && !d.sizes.includes(t)) d.sizes.push(t);
+        inp.value = ''; renderDraft(d); break;
+      }
+      case 'toggle-color': {
+        const c = el.dataset.v;
+        d.colors = d.colors.includes(c) ? d.colors.filter(x => x !== c) : d.colors.concat(c);
+        renderDraft(d); break;
+      }
+      case 'add-color': {
+        const inp = $(d.id + '-colorin');
+        addColorToDraft(d, inp.value);
+        inp.value = ''; renderDraft(d); break;
+      }
+      case 'color-sim-yes': {
+        const s = d.pendingColor.similar;
+        if (!d.colors.includes(s)) d.colors.push(s);
+        d.pendingColor = null; renderDraft(d); break;
+      }
+      case 'color-sim-no': {
+        const v = d.pendingColor.value;
+        if (!STATE.colorCatalog.includes(v)) STATE.colorCatalog.push(v);
+        if (!d.colors.includes(v)) d.colors.push(v);
+        d.pendingColor = null; renderDraft(d); break;
+      }
+      case 'add-tag': {
+        const inp = $(d.id + '-tagin'), t = normText(inp.value).replace(/^#/, '');
+        if (t && !d.tags.includes(t)) d.tags.push(t);
+        inp.value = ''; renderDraft(d); break;
+      }
+      case 'rm-tag': d.tags = d.tags.filter(t => t !== el.dataset.v); renderDraft(d); break;
+
+      case 'step': {
+        const k = key(el.dataset.t, el.dataset.c), cur = d.qty[k];
+        const n = Math.max(0, (typeof cur === 'number' ? cur : 0) + Number(el.dataset.delta));
+        d.qty[k] = n;
+        const inp = el.parentElement.querySelector('input[data-cell]');
+        inp.value = n; inp.className = cellClass(n);
+        updateLive(d); break;
+      }
+      case 'quickn': {
+        d.quickN = Math.max(0, (d.quickN || 0) + Number(el.dataset.delta));
+        $(d.id + '-n').value = d.quickN; break;
+      }
+      case 'fill-row': d.colors.forEach(c => { d.qty[key(el.dataset.t, c)] = d.quickN; }); renderDraft(d); break;
+      case 'fill-col': d.sizes.forEach(t => { d.qty[key(t, el.dataset.c)] = d.quickN; }); renderDraft(d); break;
+      case 'copy-first-row': {
+        const sizes = sortSizes(d.sizes); // orden VISUAL, no el orden de los clics
+        if (sizes.length < 2) break;
+        sizes.slice(1).forEach(t => d.colors.forEach(c => {
+          const v = d.qty[key(sizes[0], c)];
+          if (v === undefined) delete d.qty[key(t, c)]; else d.qty[key(t, c)] = v;
+        }));
+        renderDraft(d); break;
+      }
+      case 'clear-grid': d.qty = {}; renderDraft(d); break;
+      case 'fullscreen': d.fullscreen = !d.fullscreen; renderDraft(d); break;
+      case 'repeat-last': {
+        const s = STATE.lastStructure;
+        if (!s) { toast('Todavía no hay una carga anterior', 'info'); break; }
+        d.sizes = union(d.sizes, s.sizes); d.colors = union(d.colors, s.colors); d.tags = union(d.tags, s.tags);
+        renderDraft(d); toast('Talles, colores y etiquetas de la última carga', 'info'); break;
+      }
+
+      case 'set-field': {
+        const f = el.dataset.f, v = el.dataset.v;
+        d[f] = v;
+        renderDraft(d); break;
+      }
+      case 'other-open': { d.askOther = true; renderDraft(d); const i = $(d.id + '-otherin'); if (i) i.focus(); break; }
+      case 'other-cancel': d.askOther = false; renderDraft(d); break;
+      case 'other-add': {
+        const raw = normText($(d.id + '-otherin').value);
+        if (!raw) break;
+        const all = union(STATE.users, STATE.extraNames);
+        let name = all.find(u => normText(u) === raw);          // si ya existe, se usa tal cual está escrito
+        if (!name) { name = titleCase(raw); STATE.extraNames.push(name); }
+        d.hechaPor = name; d.askOther = false; renderDraft(d); break;
+      }
+      case 'pick-sku': {
+        d.sku = el.dataset.v;
+        if (d.origin === 'foto') d.skuConfirmed = false;
+        applySku(d); renderDraft(d); break;
+      }
+      case 'pick-prov': {
+        d.provider = el.dataset.v;
+        showSug(d.id + '-provsug', '');
+        const inp = $(d.id + '-provider'); if (inp) inp.value = d.provider;
+        $(d.id + '-provinfo').innerHTML = provInfoHtml(d.provider);
+        break;
+      }
+      case 'sku-accept': {
+        d.sku = d.skuSuggestion.sku; applySku(d); d.skuConfirmed = true; renderDraft(d); break;
+      }
+      case 'sku-confirm': applySku(d); d.skuConfirmed = true; renderDraft(d); break;
+      case 'discard-draft': {
+        const ok = await askConfirm('¿Descartar este producto leído de la foto? No se va a ingresar.', 'Sí, descartar', 'Volver');
+        if (!ok) break;
+        photoDrafts = photoDrafts.filter(x => x !== d); renderPhoto(); break;
+      }
+
+      case 'global-view': STATE.viewMode = el.dataset.mode; STATE.cards.forEach(c => { c.groupBy = null; }); renderList(); break;
+      case 'card-group': { const c = STATE.cards.find(x => x.id === cardId); c.groupBy = el.dataset.mode; renderList(); break; }
+      case 'card-toggle': { const c = STATE.cards.find(x => x.id === cardId); c.view = c.view === 'FALTA' ? 'STOCK' : 'FALTA'; renderList(); break; }
+      case 'card-edit': editCard(cardId); break;
+      case 'card-delete': {
+        if (STATE.busy) break;
+        const res = await withBusy('Borrando…', () => Api.borrarTarjeta(cardId));
+        if (!res.ok) { apiFailed(res, 'No se pudo borrar.'); break; }
+        setCards(res.cards); renderList(); toast('Enviada a la papelera (se puede restaurar)', 'info'); break;
+      }
+      case 'lote-delete': {
+        const c = STATE.cards.find(x => x.id === cardId);
+        const lote = STATE.cards.filter(x => x.estado === 'ACTIVA' && x.loteId === c.loteId);
+        const ok = await askConfirm(`¿Enviar a la papelera la carga completa?\nSon ${lote.length} productos cargados juntos por ${c.hechaPor} el ${fmtDate(c.createdAt)}.`, 'Sí, enviar a la papelera', 'Volver');
+        if (!ok || STATE.busy) break;
+        const res = await withBusy('Borrando…', () => Api.borrarCarga(c.loteId));
+        if (!res.ok) { apiFailed(res, 'No se pudo borrar la carga.'); break; }
+        setCards(res.cards); renderList(); toast(`${lote.length} productos enviados a la papelera`, 'info'); break;
+      }
+      case 'card-restore': {
+        if (STATE.busy) break;
+        const res = await withBusy('Restaurando…', () => Api.restaurarTarjeta(cardId));
+        if (!res.ok) { apiFailed(res, 'No se pudo restaurar.'); break; }
+        setCards(res.cards); renderList(); toast('Tarjeta restaurada'); break;
+      }
+      case 'trash-empty': {
+        if (STATE.busy) break;
+        const n = STATE.cards.filter(c => c.estado === 'PAPELERA').length;
+        if (!n || !(await askConfirm(`¿Vaciar la papelera?\nSe borran para siempre ${n} tarjeta(s). No se puede deshacer.`, 'Sí, vaciar', 'Volver'))) break;
+        const res = await withBusy('Vaciando…', () => Api.vaciarPapelera());
+        if (!res.ok) { apiFailed(res, 'No se pudo vaciar la papelera.'); break; }
+        setCards(res.cards); renderList(); toast('Papelera vaciada', 'info'); break;
+      }
+      case 'refresh': refreshAll(true); break;
+      case 'logout': logout(); break;
+      case 'login-pick': pickLoginName(el.dataset.name); break;
+      case 'login-reload': showLogin(); break;
+      case 'install': installApp(); break;
+      case 'login-submit': submitLogin(); break;
+      case 'login-back': showLoginNames(); break;
+      case 'boot-retry': start(); break;
+      case 'toggle-trash': STATE.showTrash = !STATE.showTrash; renderList(); break;
+      case 'toggle-filters': $('filters-box').classList.toggle('hidden'); break;
+      case 'print': printList(); break;
+    }
+  }
+
+  function onCellInput(el) {
+    const d = getDraft(el.dataset.d), k = key(el.dataset.t, el.dataset.c);
+    const s = el.value.trim();
+    if (s === '') delete d.qty[k];
+    else if (/^\d+$/.test(s)) d.qty[k] = parseInt(s, 10);
+    else if (s === '-') d.qty[k] = 0;
+    else d.qty[k] = el.value;
+    el.className = cellClass(d.qty[k]);   // sin re-render: el foco no se pierde
+    updateLive(d);
+  }
+
+  function onFieldInput(el) {
+    const d = getDraft(el.dataset.d), f = el.dataset.field;
+    if (!d) return;
+    if (f === 'sku') {
+      d.sku = el.value.toUpperCase();     // se guarda en MAYÚSCULAS, no solo se muestra
+      if (d.origin === 'foto') d.skuConfirmed = false;
+      showSug(d.id + '-skusug', sugListHtml(searchProducts(el.value).map(p => ({ v: p.sku, sub: p.nombre })), 'pick-sku', d.id));
+      $(d.id + '-skuinfo').innerHTML = skuInfoHtml(d);
+      updateLive(d);
+    } else if (f === 'provider') {
+      d.provider = el.value.toUpperCase();
+      showSug(d.id + '-provsug', sugListHtml(searchProviders(el.value).map(p => ({ v: p.code, sub: [p.nombre !== p.code ? p.nombre : '', p.zonas.join(', ')].filter(Boolean).join(' · ') })), 'pick-prov', d.id));
+      $(d.id + '-provinfo').innerHTML = provInfoHtml(d.provider);
+    } else if (f === 'productName' || f === 'comment') d[f] = el.value;
+    else if (f === 'quickN') d.quickN = parseInt(el.value, 10) || 0;
+  }
+
+  function onFieldChange(el) {
+    const d = getDraft(el.dataset.d), f = el.dataset.field;
+    if (!d) return;
+    if (f === 'sku') {
+      // Al salir del campo se busca el SKU. Pequeña demora para no "comerse" el toque en otro botón.
+      setTimeout(() => { if (getDraft(d.id) === d) { applySku(d); renderDraft(d); } }, 200);
+    } else if (f === 'provider') {
+      d.provider = normText(el.value);
+    }
+  }
+  // Al tocar una sugerencia no se pierde el foco del campo (si no, el toque no llega)
+  document.addEventListener('pointerdown', e => { if (e.target.closest('[data-sug]')) e.preventDefault(); });
+  document.addEventListener('mousedown', e => { if (e.target.closest('[data-sug]')) e.preventDefault(); });
+  document.addEventListener('focusout', e => {
+    const id = e.target && e.target.dataset && e.target.dataset.sugbox;
+    if (id) setTimeout(() => showSug(id, ''), 150);
+  });
+
+  document.addEventListener('click', e => {
+    const el = e.target.closest('[data-act]');
+    if (el) handleAction(el.dataset.act, el);
+  });
+  document.addEventListener('input', e => {
+    const el = e.target;
+    if (!el.dataset) return;
+    if (el.dataset.cell) onCellInput(el);
+    else if (el.dataset.field) onFieldInput(el);
+  });
+  document.addEventListener('change', e => {
+    const el = e.target;
+    if (el.dataset && el.dataset.field) onFieldChange(el);
+    else if (el.dataset && el.dataset.filter) { STATE.filters[el.dataset.filter] = el.value; renderList(); }
+    else if (el.id === 'camera-input') { toast('La lectura con IA se conecta en la Fase 3. Por ahora usá el ejemplo.', 'info'); el.value = ''; }
+  });
+  document.addEventListener('keydown', e => {
+    const el = e.target;
+    if (e.key === 'Enter' && el.dataset) {
+      if (el.dataset.enter) { e.preventDefault(); handleAction(el.dataset.enter, el); }
+      else if (el.dataset.field === 'sku' || el.dataset.field === 'provider') { e.preventDefault(); el.blur(); }
+    }
+    if (e.key === 'Escape') {
+      [manualDraft, ...photoDrafts].forEach(d => { if (d && d.fullscreen) { d.fullscreen = false; renderDraft(d); } });
+    }
+  });
+
+  /* ---------- 11. SESIÓN, SINCRONIZACIÓN E INICIO ---------- */
+  function showScreen(id, on) { const el = $(id); el.classList.toggle('hidden', !on); el.classList.toggle('flex', on); }
+  function bootMsg(msg, retry) { $('boot-msg').textContent = msg; $('boot-retry').classList.toggle('hidden', !retry); showScreen('boot-screen', true); }
+
+  // Combina la lista que manda el servidor con lo que es solo de pantalla (vista por color/talle de cada tarjeta)
+  function setCards(list) {
+    const prev = new Map(STATE.cards.map(c => [c.id, c]));
+    STATE.cards = (list || []).map(c => {
+      const o = prev.get(c.id);
+      if (o) { c.groupBy = o.groupBy; if (o.view === 'STOCK' || o.view === 'FALTA') c.view = o.view; if (o.readName && !c.readName) c.readName = o.readName; }
+      return c;
+    });
+    STATE.lastSync = Date.now();
+  }
+  async function withBusy(msg, fn) {
+    STATE.busy = true; const bar = $('busy-bar'); bar.textContent = msg; bar.classList.remove('hidden');
+    try { return await fn(); } finally { STATE.busy = false; bar.classList.add('hidden'); }
+  }
+  function apiFailed(res, fallback) {
+    if (res.code === 'AUTH') { Store.clear(); STATE.token = ''; showLogin(res.error); return; }
+    toast((res.error || fallback), 'error');
+  }
+
+  // Nombre del negocio y sucursal (pestaña Configuracion). Se recuerdan para mostrarlos al instante al abrir.
+  function applyBrand(negocio, sucursal) {
+    const b = { negocio: String(negocio || '').trim() || 'FAKATE', sucursal: String(sucursal || '').trim() };
+    document.querySelectorAll('.brand-name').forEach(el => { el.textContent = b.negocio; });
+    document.querySelectorAll('.brand-branch').forEach(el => { el.textContent = b.sucursal; el.classList.toggle('hidden', !b.sucursal); });
+    document.querySelectorAll('.brand-branch-print').forEach(el => { el.textContent = b.sucursal ? '· ' + b.sucursal : ''; });
+    document.title = b.negocio + (b.sucursal ? ' · ' + b.sucursal : '') + ' · Reposición';
+    try { localStorage.setItem(BRAND_KEY, JSON.stringify(b)); } catch (e) { /* nada */ }
+  }
+  try { const b = JSON.parse(localStorage.getItem(BRAND_KEY) || 'null'); if (b) applyBrand(b.negocio, b.sucursal); } catch (e) { /* nada */ }
+
+  async function showLogin(msg) {
+    showScreen('boot-screen', false);
+    $('login-hint').textContent = Api.mode() === 'local' ? 'Modo prueba: sirve cualquier PIN de 4 dígitos' : '';
+    showLoginNames();
+    $('login-msg').textContent = msg || ''; $('login-msg').className = 'mt-4 text-center text-sm font-bold min-h-[1.25rem] ' + (msg ? 'text-red-400' : '');
+    showScreen('login-screen', true);
+    $('login-names').innerHTML = '<div class="col-span-2 text-center text-xs text-slate-500 animate-pulse">Cargando…</div>';
+    const r = await Api.listarUsuarios();
+    if (!r.ok) { $('login-names').innerHTML = `<button type="button" data-act="login-reload" class="col-span-2 px-4 py-3 rounded-xl bg-slate-700 hover:bg-slate-600 text-white font-black text-sm">Reintentar</button>`; $('login-msg').textContent = r.error || 'No se pudo cargar la lista.'; $('login-msg').className = 'mt-4 text-center text-sm font-bold text-red-400'; return; }
+    applyBrand(r.negocio, r.sucursal);
+    $('login-names').innerHTML = r.usuarios.map(u => `<button type="button" data-act="login-pick" data-name="${esc(u)}" class="px-4 py-4 rounded-2xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white font-black text-base">${esc(u)}</button>`).join('');
+  }
+  let loginName = '';
+  function showLoginNames() { loginName = ''; $('login-step-name').classList.remove('hidden'); $('login-step-pin').classList.add('hidden'); $('login-msg').textContent = ''; }
+  function pickLoginName(name) {
+    loginName = name; $('login-who').textContent = name; $('login-pin').value = '';
+    $('login-step-name').classList.add('hidden'); $('login-step-pin').classList.remove('hidden'); $('login-msg').textContent = '';
+    setTimeout(() => $('login-pin').focus(), 50);
+  }
+  async function submitLogin() {
+    if (STATE.busy || !loginName) return;
+    const pin = $('login-pin').value.trim();
+    const msg = $('login-msg');
+    if (!/^\d{4}$/.test(pin)) { msg.textContent = 'El PIN tiene 4 números.'; msg.className = 'mt-4 text-center text-sm font-bold text-red-400'; return; }
+    msg.textContent = 'Entrando…'; msg.className = 'mt-4 text-center text-sm font-bold text-slate-400';
+    const r = await withBusy('Entrando…', () => Api.login(loginName, pin));
+    if (!r.ok) { msg.textContent = r.error || 'No se pudo entrar.'; msg.className = 'mt-4 text-center text-sm font-bold text-red-400'; $('login-pin').value = ''; $('login-pin').focus(); return; }
+    STATE.token = r.token; STATE.employee = r.user;
+    Store.set({ token: r.token, user: r.user, exp: Date.now() + (r.dias || 30) * 86400000 });
+    showScreen('login-screen', false);
+    start();
+  }
+  async function logout() {
+    const d = manualDraft;
+    if (d && (hasQty(d) || normText(d.sku)) && !(await askConfirm('Hay una carga sin guardar.\n¿Salir igual y descartarla?', 'Sí, salir', 'Volver'))) return;
+    Store.clear(); STATE.token = ''; STATE.cards = []; manualDraft = null; photoDrafts = [];
+    showLogin();
+  }
+
+  // Carga todo desde el servidor (maestro, catálogos, proveedores y tarjetas). Devuelve true si salió bien.
+  async function loadAll(first) {
+    const r = await Api.cargarTodo();
+    if (!r.ok) {
+      if (r.code === 'AUTH') { Store.clear(); STATE.token = ''; showLogin(r.error); }
+      else if (first) bootMsg(r.error || 'No se pudo cargar.', true);
+      else toast(r.error || 'No se pudo actualizar.', 'error');
+      return false;
+    }
+    if (r.user) STATE.employee = r.user;
+    loadMaster(r, first);
+    applyBrand(STATE.config.NOMBRE_NEGOCIO, STATE.config.SUCURSAL);
+    setCards(r.cards);
+    return true;
+  }
+  async function refreshAll(manual) {
+    if (STATE.busy || !STATE.token) return;
+    if (await withBusy('Actualizando…', () => loadAll(false))) { renderDraft(manualDraft); renderList(); if (manual) toast('Actualizado', 'info'); }
+  }
+  async function refreshCards() {   // chequeo liviano en segundo plano (solo las tarjetas)
+    if (STATE.busy || !STATE.token || document.hidden) return;
+    const r = await Api.obtenerTarjetas();
+    if (r.ok) { setCards(r.cards); renderList(); }
+    else if (r.code === 'AUTH') apiFailed(r);
+  }
+
+  async function start() {
+    if (!STATE.token) {
+      const s = Store.get();
+      if (s && s.token && s.exp > Date.now()) { STATE.token = s.token; STATE.employee = s.user; }
+    }
+    if (!STATE.token) { showLogin(); return; }
+    bootMsg('Cargando…', false);
+    if (!(await loadAll(true))) return;
+    showScreen('boot-screen', false); showScreen('login-screen', false);
+    $('employee-name').textContent = STATE.employee;
+    $('data-source-badge').textContent = (Api.mode() === 'local' ? 'Datos de prueba' : 'Base Sheets') + (STATE.config.SUCURSAL ? ' · ' + STATE.config.SUCURSAL : '');
+    manualDraft = newDraft('manual');
+    photoDrafts = [];
+    setMode('manual');
+    setPanelVisible(false);   // al abrir, la Lista final es lo primero
+    renderDraft(manualDraft);
+    renderPhoto();
+    renderList();
+  }
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && STATE.token && Date.now() - STATE.lastSync > 20000) refreshCards(); });
+  setInterval(refreshCards, 90000);
+  document.addEventListener('input', e => {
+    if (e.target.id === 'login-pin') { e.target.value = e.target.value.replace(/\D/g, '').slice(0, 4); if (e.target.value.length === 4) submitLogin(); }
+  });
+  document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.id === 'login-pin') { e.preventDefault(); submitLogin(); } });
+  // App instalable (solo cuando está alojada fuera de Apps Script)
+  let installEvt = null;
+  function installApp() {
+    if (!installEvt) return;
+    installEvt.prompt();
+    installEvt.userChoice.finally(() => { installEvt = null; $('btn-install').classList.add('hidden'); });
+  }
+  if (!Api.isAppsScript() && /^https?:$/.test(location.protocol)) {
+    [['manifest', 'manifest.webmanifest'], ['icon', 'icons/icon-192.png'], ['apple-touch-icon', 'icons/apple-touch-icon.png']].forEach(([rel, href]) => {
+      const l = document.createElement('link'); l.rel = rel; l.href = href; document.head.appendChild(l);
+    });
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => { /* sin modo offline */ });
+    window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; $('btn-install').classList.remove('hidden'); });
+    window.addEventListener('appinstalled', () => { installEvt = null; $('btn-install').classList.add('hidden'); toast('App instalada', 'ok'); });
+  }
+  start();
+  </script>
+</body>
+</html>
