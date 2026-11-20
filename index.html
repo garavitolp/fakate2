@@ -477,7 +477,7 @@
     if (first) STATE.viewMode = normText(STATE.config.VISTA_POR_DEFECTO) === 'TALLE' ? 'TALLE' : 'COLOR';
     STATE.users = (data.usuarios || []).map(u => String(u).trim()).filter(Boolean);
     STATE.categories = (data.categorias || []).map(normText);
-    STATE.colorCatalog = (data.colores || []).map(normText);
+    STATE.colorCatalog = (data.colores || []).map(normText).filter(c => c !== VARIOS);
 
     STATE.products = {};
     (data.maestro || []).forEach(row => {
@@ -485,19 +485,20 @@
       if (!sku) return;
       const p = STATE.products[sku] || (STATE.products[sku] = {
         sku, nombre: String(row.nombre || '').trim() || sku, categoria: normText(row.categoria),
-        proveedores: [], provPred: '', variants: [], sizes: [], colors: [], hasMin: false
+        proveedores: [], provPred: '', variants: [], varios: {}, sizes: [], colors: [], hasMin: false
       });
       splitList(row.proveedores).forEach(c => { if (!p.proveedores.includes(c)) p.proveedores.push(c); });
       if (normText(row.provPred)) p.provPred = normText(row.provPred);
       const color = normText(row.color), talle = normSize(row.talle);
+      if (color === VARIOS) { const mv = toNumOrNull(row.stockMinimo); if (talle && mv !== null) p.varios[talle] = mv; return; }
       if (color && talle && !p.variants.some(v => v.color === color && v.talle === talle))
         p.variants.push({ color, talle, min: toNumOrNull(row.stockMinimo) });
     });
     Object.values(STATE.products).forEach(p => {
       p.variants.forEach(v => { if (!STATE.colorCatalog.includes(v.color)) STATE.colorCatalog.push(v.color); });
-      p.sizes = sortSizes(p.variants.map(v => v.talle));
+      p.sizes = sortSizes([...new Set(p.variants.map(v => v.talle).concat(Object.keys(p.varios)))]);
       p.colors = orderColors(p.variants.map(v => v.color));
-      p.hasMin = p.variants.some(v => v.min !== null);
+      p.hasMin = p.variants.some(v => v.min !== null) || Object.keys(p.varios).length > 0;
     });
 
     STATE.providers = {};
@@ -509,6 +510,7 @@
   }
 
   /* ---------- 5. BORRADORES (un mismo modelo para carga manual y foto) ---------- */
+  const VARIOS = 'VARIOS';   // color comodín del Maestro: mínimo por talle para cualquier color sin mínimo propio
   function newDraft(origin, init = {}) {
     return Object.assign({
       id: 'd' + (++draftSeq), origin,
@@ -558,7 +560,8 @@
     const p = productOf(d);
     const minMap = {};
     if (p) p.variants.forEach(v => { if (v.min !== null) minMap[key(v.talle, v.color)] = v; });
-    const hasMin = Object.keys(minMap).length > 0;
+    const varios = (p && p.varios) || {};
+    const hasMin = Object.keys(minMap).length > 0 || Object.keys(varios).length > 0;
     const sizes = sortSizes(d.sizes), colors = orderColors(d.colors);
     const entered = [];
     let invalid = 0;
@@ -575,16 +578,22 @@
       counted = entered.slice();
       if (hasMin) {
         falta = [];
-        Object.values(minMap).forEach(v => {
-          const k = key(v.talle, v.color);
-          const inGrid = d.sizes.includes(v.talle) && d.colors.includes(v.color);
+        const proc = (talle, color, min) => {
+          const k = key(talle, color);
+          const inGrid = d.sizes.includes(talle) && d.colors.includes(color);
           const raw = inGrid ? d.qty[k] : undefined, st = cellState(raw);
           if (st === 'invalid') return;
           let q = 0;
           if (st === 'num') q = raw; else blanks++;      // vacía = 0 (con aviso)
-          if (q === 0) counted.push({ talle: v.talle, color: v.color, qty: 0 });
-          const f = v.min - q;
-          if (f > 0) falta.push({ talle: v.talle, color: v.color, qty: f });
+          if (q === 0) counted.push({ talle, color, qty: 0 });
+          const f = min - q;
+          if (f > 0) falta.push({ talle, color, qty: f });
+        };
+        Object.values(minMap).forEach(v => proc(v.talle, v.color, v.min));
+        // VARIOS: cada color de la grilla que no tiene mínimo propio usa el mínimo "VARIOS" de ese talle
+        sizes.forEach(t => {
+          if (varios[t] === undefined) return;
+          colors.forEach(c => { if (!minMap[key(t, c)]) proc(t, c, varios[t]); });
         });
       }
     }
@@ -874,7 +883,8 @@
     const sizes = sortSizes(d.sizes), colors = orderColors(d.colors);
     const minMap = {};
     if (p) p.variants.forEach(v => { if (v.min !== null) minMap[key(v.talle, v.color)] = v.min; });
-    const hasMin = Object.keys(minMap).length > 0;
+    const varios = (p && p.varios) || {};
+    const hasMin = Object.keys(minMap).length > 0 || Object.keys(varios).length > 0;
     let h = `<div id="${d.id}-gridwrap" class="${d.fullscreen ? 'matrix-fullscreen' : 'bg-slate-900/65 border border-navy-border rounded-2xl p-3 sm:p-4'} space-y-3">
       <div class="flex flex-wrap items-center justify-between gap-2">
         <div class="flex items-center gap-2"><span class="${C.stepNum}">3</span>
@@ -908,13 +918,13 @@
                 <div class="flex items-center justify-between gap-1.5"><span class="px-2.5 py-1 rounded-lg bg-navy-accent text-white text-xs font-black">${esc(fmtShort(t))}</span>
                 <button type="button" data-act="fill-row" data-d="${d.id}" data-t="${esc(t)}" class="text-[9px] font-bold text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 px-1.5 py-0.5 rounded leading-tight">→ Fila<br>= N</button></div></td>
               ${colors.map((c, j) => {
-                const k = key(t, c), raw = d.qty[k], m = minMap[k];
+                const k = key(t, c), raw = d.qty[k], isVar = minMap[k] === undefined && varios[t] !== undefined, m = isVar ? varios[t] : minMap[k];
                 return `<td class="p-1.5 border-b border-l border-navy-border text-center">
                   <div class="flex items-center justify-center gap-1">
                     <button type="button" data-act="step" data-d="${d.id}" data-t="${esc(t)}" data-c="${esc(c)}" data-delta="-1" class="${C.stepBtn}">−</button>
                     <input type="text" inputmode="numeric" autocomplete="off" id="${d.id}-cell-${i}-${j}" data-cell="1" data-d="${d.id}" data-t="${esc(t)}" data-c="${esc(c)}" value="${esc(raw ?? '')}" placeholder="${m !== undefined ? '0' : '·'}" class="${cellClass(raw)}">
                     <button type="button" data-act="step" data-d="${d.id}" data-t="${esc(t)}" data-c="${esc(c)}" data-delta="1" class="${C.stepBtn}">+</button>
-                  </div>${m !== undefined ? `<div class="text-[9px] text-slate-500 mt-0.5">mín ${esc(m)}</div>` : ''}</td>`;
+                  </div>${m !== undefined ? `<div class="text-[9px] text-slate-500 mt-0.5">mín ${esc(m)}${isVar ? ' · varios' : ''}</div>` : ''}</td>`;
               }).join('')}</tr>`).join('')}
             </tbody>
           </table>
@@ -1032,7 +1042,7 @@
   /* ---------- 7. ACCIONES DEL EDITOR ---------- */
   function addColorToDraft(d, raw) {
     const val = normText(raw);
-    if (!val) return;
+    if (!val || val === VARIOS) return;
     if (d.colors.includes(val)) return;
     let similar = null, min = 99;
     for (const cat of STATE.colorCatalog) {
