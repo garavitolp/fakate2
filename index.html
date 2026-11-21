@@ -119,6 +119,7 @@
     <div class="max-w-4xl mx-auto mb-3 flex items-center bg-slate-900 rounded-xl p-1 border border-slate-800">
       <button type="button" id="btn-mode-manual" data-act="mode" data-mode="manual" class="flex-1">✍️ Carga manual</button>
       <button type="button" id="btn-mode-photo" data-act="mode" data-mode="photo" class="flex-1">📷 Foto (IA)</button>
+      <button type="button" id="btn-mode-min" data-act="mode" data-mode="min" class="hidden flex-1">📏 Mínimos</button>
     </div>
 
     <!-- 1. CARGA MANUAL -->
@@ -128,6 +129,16 @@
       <div class="mt-6 flex flex-wrap gap-3 justify-end">
         <button type="button" id="btn-cancel-edit" data-act="cancel-edit" class="hidden px-5 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-sm transition">Cancelar edición</button>
         <button type="button" id="btn-save-manual" data-act="save-manual" class="w-full sm:w-auto px-8 py-3 rounded-xl bg-green-600 hover:bg-green-500 text-white font-black text-sm uppercase tracking-widest shadow-lg transition">Guardar producto</button>
+      </div>
+    </section>
+
+    <!-- 3. DEFINIR STOCK MÍNIMO (solo Pier y Sio: Configuracion → EDITORES_MINIMOS) -->
+    <section id="min-mode-panel" class="hidden bg-navy-card border border-navy-border rounded-2xl shadow-xl p-4 sm:p-6 mb-8 max-w-4xl mx-auto">
+      <div id="min-editor"></div>
+      <div class="mt-6 flex flex-wrap gap-3 justify-end">
+        <button type="button" data-act="m-reset" class="px-5 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-sm transition">Limpiar todo</button>
+        <button type="button" data-act="m-save-next" class="px-5 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-black text-sm transition">Guardar y cargar otro parecido</button>
+        <button type="button" data-act="m-save" class="px-8 py-3 rounded-xl bg-green-600 hover:bg-green-500 text-white font-black text-sm uppercase tracking-widest shadow-lg transition">Guardar producto</button>
       </div>
     </section>
 
@@ -402,6 +413,7 @@
   };
   let manualDraft = null;
   let photoDrafts = [];
+  let minDraft = null;
   let draftSeq = 0;
 
   /* ---------- 4. CAPA DE DATOS ---------- */
@@ -427,7 +439,7 @@
   const Local = {
     listarUsuarios: async () => ({ ok: true, negocio: MOCK.config.NOMBRE_NEGOCIO, sucursal: MOCK.config.SUCURSAL, usuarios: MOCK.usuarios.slice() }),
     login: async (n, p) => /^\d{4}$/.test(String(p)) ? { ok: true, token: 'local', user: n, dias: 30 } : { ok: false, code: 'BAD', error: 'PIN incorrecto.' },
-    cargarTodo: async () => Object.assign(clone(MOCK), { ok: true, user: STATE.employee, cards: clone(LOCAL.cards) }),
+    cargarTodo: async () => Object.assign(clone(MOCK), { ok: true, user: STATE.employee, cards: clone(LOCAL.cards), puedeMinimos: true }),
     obtenerTarjetas: async () => ({ ok: true, cards: clone(LOCAL.cards) }),
     guardarTarjetas: async (t, payload) => {
       payload.cards.slice().reverse().forEach(card => {
@@ -439,6 +451,17 @@
     },
     borrarTarjeta: async (t, id) => { LOCAL.cards.filter(c => c.id === id).forEach(c => Object.assign(c, { estado: 'PAPELERA', deletedBy: STATE.employee, deletedAt: new Date().toISOString() })); return { ok: true, cards: clone(LOCAL.cards) }; },
     borrarCarga: async (t, lote) => { LOCAL.cards.filter(c => c.loteId === lote && c.estado === 'ACTIVA').forEach(c => Object.assign(c, { estado: 'PAPELERA', deletedBy: STATE.employee, deletedAt: new Date().toISOString() })); return { ok: true, cards: clone(LOCAL.cards) }; },
+    guardarMinimos: async (t, p) => {
+      const antes = MOCK.maestro.filter(r => r.sku === p.sku);
+      const k = r => String(r.color).toUpperCase() + '|' + String(r.talle);
+      const quedan = new Set(p.cells.map(c => String(c.color).toUpperCase() + '|' + String(c.talle)));
+      const nuevas = p.cells.filter(c => !antes.some(r => k(r) === String(c.color).toUpperCase() + '|' + String(c.talle))).length;
+      const quitadas = antes.filter(r => !quedan.has(k(r))).length;
+      MOCK.maestro = MOCK.maestro.filter(r => r.sku !== p.sku);
+      p.cells.forEach(c => MOCK.maestro.push({ sku: p.sku, nombre: p.nombre, categoria: p.categoria, color: String(c.color).toUpperCase(), talle: String(c.talle), stockMinimo: c.min, proveedores: p.proveedores.join(', '), provPred: p.provPred || '' }));
+      p.cells.forEach(c => { const col = String(c.color).toUpperCase(); if (col !== 'VARIOS' && !MOCK.colores.includes(col)) MOCK.colores.push(col); });
+      return { ok: true, maestro: clone(MOCK.maestro), colores: MOCK.colores.slice(), resumen: { nuevas, actualizadas: p.cells.length - nuevas, quitadas } };
+    },
     vaciarPapelera: async () => { const n = LOCAL.cards.filter(c => c.estado === 'PAPELERA').length; LOCAL.cards = LOCAL.cards.filter(c => c.estado !== 'PAPELERA'); return { ok: true, borradas: n, cards: clone(LOCAL.cards) }; },
     restaurarTarjeta: async (t, id) => { LOCAL.cards.filter(c => c.id === id).forEach(c => Object.assign(c, { estado: 'ACTIVA', deletedBy: '', deletedAt: '' })); return { ok: true, cards: clone(LOCAL.cards) }; }
   };
@@ -469,7 +492,8 @@
     borrarTarjeta: id => Api.call('borrarTarjeta', STATE.token, id),
     borrarCarga: lote => Api.call('borrarCarga', STATE.token, lote),
     restaurarTarjeta: id => Api.call('restaurarTarjeta', STATE.token, id),
-    vaciarPapelera: () => Api.call('vaciarPapelera', STATE.token)
+    vaciarPapelera: () => Api.call('vaciarPapelera', STATE.token),
+    guardarMinimos: payload => Api.call('guardarMinimos', STATE.token, payload)
   };
 
   function loadMaster(data, first = true) {
@@ -523,7 +547,7 @@
       editingCardId: null, showErrors: false
     }, init);
   }
-  const getDraft = id => (manualDraft && manualDraft.id === id) ? manualDraft : photoDrafts.find(d => d.id === id);
+  const getDraft = id => (manualDraft && manualDraft.id === id) ? manualDraft : (minDraft && minDraft.id === id) ? minDraft : photoDrafts.find(d => d.id === id);
   const productOf = d => (d.appliedSku && d.appliedSku === normText(d.sku)) ? (STATE.products[d.appliedSku] || null) : null;
   const hasQty = d => Object.values(d.qty).some(v => v !== '' && v !== undefined && v !== null);
   const cellState = raw => (raw === undefined || raw === null || raw === '') ? 'blank' : (typeof raw === 'number' ? 'num' : 'invalid');
@@ -665,13 +689,13 @@
   /* Sugerencias acotadas: solo aparecen al escribir y nunca más de 8.
      Pensado para miles de productos (no se listan todos). */
   const MAX_SUG = 8;
-  function searchProducts(q) {
+  function searchProducts(q, withExact) {
     q = normText(q);
     if (q.length < 2) return [];
     const words = tokens(q);
     const starts = [], contains = [], byName = [];
     for (const p of Object.values(STATE.products)) {
-      if (p.sku === q) continue;
+      if (p.sku === q && !withExact) continue;
       if (p.sku.startsWith(q)) starts.push(p);
       else if (p.sku.includes(q)) contains.push(p);
       else if (words.length) { const n = tokens(p.nombre); if (words.every(w => n.some(x => x.startsWith(w)))) byName.push(p); }
@@ -981,10 +1005,10 @@
     const focusId = ae && ae.id ? ae.id : null;
     let pos = null;
     try { pos = ae.selectionStart; } catch (e) { pos = null; }
-    const target = d.origin === 'manual' ? $('manual-editor') : $('editor-' + d.id);
+    const target = d.origin === 'manual' ? $('manual-editor') : d.origin === 'min' ? $('min-editor') : $('editor-' + d.id);
     if (!target) return;
-    target.innerHTML = editorHtml(d);
-    if (d.origin === 'manual') renderManualChrome(); else updatePhotoConfirm();
+    target.innerHTML = d.origin === 'min' ? minEditorHtml(d) : editorHtml(d);
+    if (d.origin === 'manual') renderManualChrome(); else if (d.origin === 'foto') updatePhotoConfirm();
     syncBodyScroll();
     if (focusId) {
       const el = $(focusId);
@@ -996,12 +1020,13 @@
   }
   // Actualización liviana (sin tocar la grilla): vista previa, errores, botón de confirmar
   function updateLive(d) {
+    if (d.origin === 'min') { const pm = $(d.id + '-preview'); if (pm) pm.innerHTML = minSummaryHtml(d); return; }
     const pv = $(d.id + '-preview'); if (pv) pv.innerHTML = previewHtml(d);
     const er = $(d.id + '-errors'); if (er) er.innerHTML = errorsHtml(d);
     if (d.origin === 'foto') updatePhotoConfirm();
   }
   function syncBodyScroll() {
-    const any = [manualDraft, ...photoDrafts].some(d => d && d.fullscreen);
+    const any = [manualDraft, minDraft, ...photoDrafts].some(d => d && d.fullscreen);
     document.body.style.overflow = any ? 'hidden' : '';
   }
   function renderManualChrome() {
@@ -1344,6 +1369,258 @@
     window.print();
   }
 
+
+  /* ---------- 7b. DEFINIR STOCK MÍNIMO (solo quienes figuran en EDITORES_MINIMOS) ---------- */
+  function newMinDraft(init = {}) {
+    return Object.assign({
+      id: 'dmin', origin: 'min', sku: '', appliedSku: '', existing: false, nombre: '', categoria: '',
+      provPred: '', proveedores: [], sizes: [], colors: [], qty: {}, quickN: 1, fullscreen: false,
+      pendingColor: null, rFrom: '', rTo: '', rStep: 2, showErrors: false
+    }, init);
+  }
+  const minColors = d => orderColors(d.colors.filter(c => c !== VARIOS)).concat(d.colors.includes(VARIOS) ? [VARIOS] : []);
+  const minHasData = d => d.sizes.length > 0 || d.colors.length > 0 || hasQty(d);
+  // Filas que se mandan al Maestro. Color común: una fila por talle × color (vacío = definido sin mínimo).
+  // VARIOS: solo los talles que tienen número.
+  function minCells(d) {
+    const out = [];
+    sortSizes(d.sizes).forEach(t => minColors(d).forEach(c => {
+      const raw = d.qty[key(t, c)], st = cellState(raw);
+      if (st === 'invalid') return;
+      if (c === VARIOS) { if (st === 'num') out.push({ talle: t, color: c, min: raw }); }
+      else out.push({ talle: t, color: c, min: st === 'num' ? raw : '' });
+    }));
+    return out;
+  }
+  function minRemoved(d) {
+    const p = STATE.products[normText(d.sku)];
+    if (!p || !d.existing) return [];
+    const now = new Set(minCells(d).map(c => key(c.talle, c.color)));
+    return p.variants.map(v => key(v.talle, v.color)).concat(Object.keys(p.varios).map(t => key(t, VARIOS))).filter(k => !now.has(k));
+  }
+  function validateMin(d) {
+    const msgs = [];
+    if (!normText(d.sku)) msgs.push('Falta el SKU.');
+    if (!d.nombre.trim()) msgs.push('Falta el nombre del producto.');
+    if (!d.categoria) msgs.push('Elegí la categoría.');
+    if (!d.sizes.length) msgs.push('Elegí al menos un talle.');
+    if (!d.colors.length) msgs.push('Elegí al menos un color (o VARIOS).');
+    let invalid = 0;
+    sortSizes(d.sizes).forEach(t => minColors(d).forEach(c => { if (cellState(d.qty[key(t, c)]) === 'invalid') invalid++; }));
+    if (invalid) msgs.push(`Hay ${invalid} celda(s) que no son números (en rojo).`);
+    if (d.colors.includes(VARIOS) && !d.sizes.some(t => cellState(d.qty[key(t, VARIOS)]) === 'num')) msgs.push('VARIOS está elegido pero sin ningún mínimo: cargalo o sacalo.');
+    if (!msgs.length && !minCells(d).length) msgs.push('No hay ninguna variante para guardar.');
+    return { ok: msgs.length === 0, messages: msgs };
+  }
+  function minSummaryHtml(d) {
+    const cells = minCells(d);
+    if (!cells.length) return '';
+    const con = cells.filter(c => c.color !== VARIOS && c.min !== '').length, sin = cells.filter(c => c.color !== VARIOS && c.min === '').length;
+    const vt = cells.filter(c => c.color === VARIOS).length, rem = minRemoved(d).length;
+    let h = `<div class="mt-1 p-3 bg-slate-950/60 border border-slate-700 rounded-xl text-xs space-y-1">
+      <div class="text-[10px] font-black uppercase tracking-widest text-slate-400">Se guardan ${cells.length} fila(s) en el Maestro</div>
+      <div class="text-slate-200">${con} con mínimo${sin ? ` · ${sin} sin mínimo (talle/color definido, no suma al faltante)` : ''}${vt ? ` · VARIOS en ${vt} talle(s)` : ''}</div>`;
+    if (rem) h += `<div class="text-amber-300 font-bold">⚠ Se van a quitar ${rem} variante(s) que ya no están en la grilla.</div>`;
+    return h + '</div>';
+  }
+  function minSkuInfoHtml(d) {
+    const sku = normText(d.sku);
+    if (!sku) return '';
+    if (sku !== d.appliedSku) return `<div class="text-[11px] text-slate-400">Tocá una sugerencia o presioná Enter para buscar el SKU.</div>`;
+    return d.existing
+      ? `<span class="${C.badge} bg-amber-500/10 border-amber-500 text-amber-300">✏ Producto existente: se actualizan sus mínimos</span>`
+      : `<span class="${C.badge} bg-emerald-900/40 border-emerald-600 text-emerald-300">＋ Producto nuevo</span>`;
+  }
+  function minProvHtml(d) {
+    return `<div class="mb-3"><div class="relative max-w-md"><label class="${C.label}">Proveedores del producto (tocá uno para marcarlo ★ predeterminado)</label>
+      <div class="flex gap-2"><input id="${d.id}-provin" data-mfield="provIn" data-enter="m-add-prov" data-d="${d.id}" data-sugbox="${d.id}-provsug" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Código o nombre del proveedor…" class="${C.smallInput}">
+        <button type="button" data-act="m-add-prov" data-d="${d.id}" class="${C.smallBtn}">Añadir</button></div>
+      <div id="${d.id}-provsug" class="sug-box hidden"></div></div>
+      ${d.proveedores.length ? `<div class="flex flex-wrap gap-1.5 mt-2">${d.proveedores.map(c => `<span class="inline-flex items-stretch rounded-md border ${d.provPred === c ? 'border-amber-500 bg-amber-900/30' : 'border-slate-700 bg-slate-800'}">
+        <button type="button" data-act="m-pred" data-d="${d.id}" data-v="${esc(c)}" class="px-2 py-1 text-[11px] font-bold text-slate-100">${esc(c)}${d.provPred === c ? ' ★' : ''}</button>
+        <button type="button" data-act="m-rm-prov" data-d="${d.id}" data-v="${esc(c)}" class="px-2 text-slate-400 hover:text-white border-l border-slate-700">✕</button></span>`).join('')}</div>` : ''}</div>`;
+  }
+  function minRangeHtml(d) {
+    const pre = (a, b, s, l) => `<button type="button" data-act="m-preset" data-d="${d.id}" data-v="${a}-${b}-${s}" class="${C.ghostBtn}">${l}</button>`;
+    return `<div class="mb-5 p-3 rounded-xl bg-slate-900/60 border border-navy-border">
+      <div class="text-[10px] font-bold text-slate-400 uppercase mb-2">Rango rápido de talles</div>
+      <div class="flex flex-wrap gap-1.5 mb-2">${pre(1, 10, 1, 'T1 a T10')}${pre(2, 16, 2, 'T2 a T16 (de 2 en 2)')}${pre(4, 16, 2, 'T4 a T16 (de 2 en 2)')}${pre(38, 48, 2, 'T38 a T48 (de 2 en 2)')}
+        <button type="button" data-act="m-clear-sizes" data-d="${d.id}" class="${C.ghostBtn}">Quitar todos</button></div>
+      <div class="flex flex-wrap items-center gap-2 text-xs text-slate-300">Desde
+        <input data-mfield="rFrom" data-d="${d.id}" type="text" inputmode="numeric" value="${esc(d.rFrom)}" class="w-14 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-center text-white">
+        hasta <input data-mfield="rTo" data-d="${d.id}" type="text" inputmode="numeric" value="${esc(d.rTo)}" class="w-14 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-center text-white">
+        de <input data-mfield="rStep" data-d="${d.id}" type="text" inputmode="numeric" value="${esc(d.rStep)}" class="w-12 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-center text-white"> en
+        <button type="button" data-act="m-range-add" data-d="${d.id}" class="${C.smallBtn}">Agregar rango</button></div></div>`;
+  }
+  function minGridHtml(d) {
+    const sizes = sortSizes(d.sizes), colors = minColors(d);
+    let h = `<div id="${d.id}-gridwrap" class="${d.fullscreen ? 'matrix-fullscreen' : 'bg-slate-900/65 border border-navy-border rounded-2xl p-3 sm:p-4'} space-y-3">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <div class="flex items-center gap-2"><span class="${C.stepNum}">3</span>
+          <div><span class="block text-xs font-extrabold uppercase tracking-wider text-slate-200">Stock mínimo por talle y color</span>
+          <span class="block text-[11px] text-slate-400">Vacío = esa variante existe pero sin mínimo. “-” = 0. VARIOS = mínimo para cada color que no esté en la lista.</span></div></div>
+        <button type="button" data-act="fullscreen" data-d="${d.id}" class="px-3 py-1.5 rounded-lg ${d.fullscreen ? 'bg-slate-700 hover:bg-slate-600' : 'bg-blue-600 hover:bg-blue-500'} text-white font-bold text-xs shadow transition shrink-0">${d.fullscreen ? '✕ Cerrar ampliado' : '⛶ Ampliar'}</button>
+      </div>`;
+    if (!sizes.length || !colors.length) {
+      h += `<div class="p-4 text-center text-slate-500 text-xs italic">Elegí al menos 1 talle y 1 color para habilitar la grilla.</div>`;
+    } else {
+      h += `<div class="flex flex-wrap items-center gap-2">
+          <div class="flex items-center bg-navy-input border border-navy-inputBorder rounded-lg p-0.5">
+            <span class="text-[10px] font-bold uppercase text-slate-400 px-1.5">N:</span>
+            <button type="button" data-act="quickn" data-d="${d.id}" data-delta="-1" class="${C.stepBtn}">−</button>
+            <input id="${d.id}-n" data-field="quickN" data-d="${d.id}" type="text" inputmode="numeric" value="${esc(d.quickN)}" class="w-10 bg-transparent px-1 py-1 text-sm font-extrabold text-center text-white focus:outline-none">
+            <button type="button" data-act="quickn" data-d="${d.id}" data-delta="1" class="${C.stepBtn}">+</button>
+          </div>
+          <button type="button" data-act="copy-first-row" data-d="${d.id}" class="px-3 py-2 rounded-lg bg-blue-950/90 hover:bg-blue-900 border border-blue-700/70 text-[11px] font-bold text-blue-300 transition">📋 Copiar 1° fila a todos los talles</button>
+          <button type="button" data-act="clear-grid" data-d="${d.id}" class="${C.ghostBtn} ml-auto">🧹 Limpiar mínimos</button>
+        </div>
+        <div class="overflow-x-auto rounded-xl border border-navy-border"><table class="w-full text-left border-collapse"><thead><tr>
+          <th class="p-2 border-b border-navy-border sticky left-0 z-20 bg-slate-900 min-w-[84px]"><span class="text-[10px] font-bold uppercase text-slate-500">Talle \\ Color</span></th>
+          ${colors.map(c => `<th class="p-2 text-center border-b border-l border-navy-border min-w-[112px] bg-slate-900/90"><div class="flex flex-col items-center gap-1">
+            <span class="text-xs font-black uppercase ${c === VARIOS ? 'text-amber-300' : 'text-white'}">${esc(c)}</span>${c === VARIOS ? '<span class="text-[9px] text-amber-200/80 leading-tight">cada otro color</span>' : ''}
+            <button type="button" data-act="fill-col" data-d="${d.id}" data-c="${esc(c)}" class="text-[9px] font-bold text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 px-2 py-0.5 rounded">↓ Columna = N</button></div></th>`).join('')}
+        </tr></thead><tbody>${sizes.map((t, i) => `<tr>
+          <td class="p-2 border-b border-navy-border bg-slate-900 sticky left-0 z-10"><div class="flex items-center justify-between gap-1.5"><span class="px-2.5 py-1 rounded-lg bg-navy-accent text-white text-xs font-black">${esc(fmtShort(t))}</span>
+            <button type="button" data-act="fill-row" data-d="${d.id}" data-t="${esc(t)}" class="text-[9px] font-bold text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 px-1.5 py-0.5 rounded leading-tight">→ Fila<br>= N</button></div></td>
+          ${colors.map((c, j) => { const raw = d.qty[key(t, c)];
+            return `<td class="p-1.5 border-b border-l border-navy-border text-center"><div class="flex items-center justify-center gap-1">
+              <button type="button" data-act="step" data-d="${d.id}" data-t="${esc(t)}" data-c="${esc(c)}" data-delta="-1" class="${C.stepBtn}">−</button>
+              <input type="text" inputmode="numeric" autocomplete="off" id="${d.id}-cell-${i}-${j}" data-cell="1" data-d="${d.id}" data-t="${esc(t)}" data-c="${esc(c)}" value="${esc(raw ?? '')}" placeholder="·" class="${cellClass(raw)}">
+              <button type="button" data-act="step" data-d="${d.id}" data-t="${esc(t)}" data-c="${esc(c)}" data-delta="1" class="${C.stepBtn}">+</button></div></td>`; }).join('')}</tr>`).join('')}
+        </tbody></table></div>`;
+    }
+    return h + `<div id="${d.id}-preview">${minSummaryHtml(d)}</div></div>`;
+  }
+  function minEditorHtml(d) {
+    let h = '';
+    if (d.showErrors) { const v = validateMin(d); if (!v.ok) h += `<div class="mb-4 p-3 rounded-xl bg-red-950/40 border border-red-500/50 text-red-200 text-xs font-bold space-y-0.5">${v.messages.map(m => '<div>• ' + esc(m) + '</div>').join('')}</div>`; }
+    h += `<div class="mb-4"><span class="inline-block px-2 py-1 rounded bg-amber-600 text-white text-[10px] font-black uppercase tracking-widest mb-1">Stock mínimo</span>
+      <p class="text-xs text-slate-400">Definí o corregí los mínimos de un producto. Para uno parecido a otro ya cargado, usá “Copiar de otro producto”.</p></div>
+      <div class="relative max-w-md mb-3"><label class="${C.label}">📋 Copiar de otro producto (talles, colores y mínimos)</label>
+        <input id="${d.id}-copyin" data-mfield="copyFrom" data-d="${d.id}" data-sugbox="${d.id}-copysug" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Escribí el SKU o parte del nombre…" class="${C.input} uppercase">
+        <div id="${d.id}-copysug" class="sug-box hidden"></div></div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+        <div class="relative"><label class="${C.label}">SKU</label>
+          <input id="${d.id}-sku" data-mfield="sku" data-d="${d.id}" data-sugbox="${d.id}-skusug" autocomplete="off" autocapitalize="characters" spellcheck="false" value="${esc(d.sku)}" placeholder="Nuevo, o uno existente para editarlo" class="${C.input} uppercase">
+          <div id="${d.id}-skusug" class="sug-box hidden"></div><div id="${d.id}-skuinfo" class="mt-1.5">${minSkuInfoHtml(d)}</div></div>
+        <div><label class="${C.label}">Producto</label>
+          <input id="${d.id}-nombre" data-mfield="nombre" data-d="${d.id}" value="${esc(d.nombre)}" placeholder="Ej: Biker Deportivo Nena" class="${C.input}"></div>
+      </div>
+      <div class="mb-3"><label class="${C.label}">Categoría</label><div class="flex flex-wrap gap-1.5">
+        ${union(STATE.categories, d.categoria ? [d.categoria] : []).map(c => `<button type="button" data-act="set-field" data-d="${d.id}" data-f="categoria" data-v="${esc(c)}" class="${C.chip} ${d.categoria === c ? C.sizeOn : C.chipOff}">${esc(c)}</button>`).join('')}</div></div>
+      ${minProvHtml(d)}
+      <div class="p-3 sm:p-4 bg-navy-input border border-navy-inputBorder rounded-xl">
+        <h3 class="text-xs font-black uppercase text-white tracking-widest flex items-center gap-2 mb-4"><span class="w-2 h-2 rounded-full bg-amber-500"></span>Variantes y mínimos</h3>
+        ${sizesHtml(d, null)}
+        ${minRangeHtml(d)}
+        ${colorsHtml(Object.assign({}, d, { colors: d.colors.filter(c => c !== VARIOS) }))}
+        <div class="mb-5 -mt-2"><button type="button" data-act="m-toggle-varios" data-d="${d.id}" class="${C.chip} ${d.colors.includes(VARIOS) ? 'bg-amber-700 text-white border-amber-400' : C.chipOff}">VARIOS · mínimo para cada otro color</button></div>
+        ${minGridHtml(d)}
+      </div>`;
+    return h;
+  }
+  // Carga en el formulario los datos de un producto del Maestro (para editarlo o para copiarlo como base).
+  function loadProductIntoMin(d, p, copyOnly) {
+    if (p.categoria) d.categoria = p.categoria;
+    if (!copyOnly) d.nombre = p.nombre;
+    d.proveedores = [...p.proveedores]; d.provPred = p.provPred || '';
+    if (d.provPred && !d.proveedores.includes(d.provPred)) d.proveedores.unshift(d.provPred);
+    d.sizes = [...p.sizes]; d.colors = [...p.colors];
+    if (Object.keys(p.varios).length) d.colors.push(VARIOS);
+    d.qty = {};
+    p.variants.forEach(v => { if (v.min !== null) d.qty[key(v.talle, v.color)] = v.min; });
+    Object.keys(p.varios).forEach(t => { d.qty[key(t, VARIOS)] = p.varios[t]; });
+    d.pendingColor = null;
+  }
+  // Devuelve true si cargó un producto existente en el formulario.
+  async function applyMinSku(d) {
+    const sku = normText(d.sku);
+    d.sku = sku;
+    if (sku === d.appliedSku) return false;
+    d.appliedSku = sku;
+    const p = STATE.products[sku];
+    if (!p) { d.existing = false; const si = $(d.id + '-skuinfo'); if (si) si.innerHTML = minSkuInfoHtml(d); return false; }   // producto nuevo: sin redibujar, para no pisar lo que se esté escribiendo
+    if (minHasData(d) && !(await askConfirm(`El SKU ${sku} ya existe en el Maestro.\n¿Cargar sus datos para editarlo? Reemplaza lo que armaste en pantalla.`, 'Sí, cargarlo', 'No, volver'))) {
+      d.sku = ''; d.appliedSku = ''; renderDraft(d); return false;
+    }
+    loadProductIntoMin(d, p, false); d.existing = true;
+    renderDraft(d);
+    return true;
+  }
+  async function copyFromProduct(d, sku) {
+    showSug(d.id + '-copysug', '');
+    const inp = $(d.id + '-copyin'); if (inp) inp.value = '';
+    const p = STATE.products[sku];
+    if (!p) return;
+    if (minHasData(d) && !(await askConfirm(`¿Copiar talles, colores y mínimos de ${sku}?\nReemplaza lo que hay en pantalla (el SKU y el nombre no cambian).`, 'Sí, copiar', 'Volver'))) return;
+    const nombre = d.nombre;
+    loadProductIntoMin(d, p, true); d.nombre = nombre;
+    renderDraft(d); toast(`Copiado de ${sku}. Ahora ponele su SKU y nombre.`, 'info');
+  }
+  function addMinProv(d, raw) {
+    const code = normText(raw);
+    if (!code) return;
+    if (!d.proveedores.includes(code)) d.proveedores.push(code);
+    if (!d.provPred) d.provPred = code;
+    showSug(d.id + '-provsug', '');
+    renderDraft(d);
+  }
+  function addMinRange(d, from, to, step) {
+    from = parseInt(from, 10); to = parseInt(to, 10); step = parseInt(step, 10) || 1;
+    if (!(from >= 0) || !(to >= from) || step < 1 || (to - from) / step > 60) { toast('Rango no válido (desde, hasta y de cuánto en cuánto).', 'error'); return; }
+    for (let v = from; v <= to; v += step) { const t = String(v); if (!d.sizes.includes(t)) d.sizes.push(t); }
+    renderDraft(d);
+  }
+  async function saveMin(next) {
+    if (STATE.busy || !minDraft) return;
+    const d = minDraft;
+    if (await applyMinSku(d)) { toast('Cargué los datos de ese producto. Revisalos y tocá Guardar de nuevo.', 'info'); return; }
+    const v = validateMin(d);
+    if (!v.ok) { d.showErrors = true; renderDraft(d); toast(v.messages[0], 'error'); return; }
+    const sku = normText(d.sku);
+    if (STATE.products[sku] && !d.existing) { toast(`El SKU ${sku} ya existe: elegilo de la lista para editarlo.`, 'error'); return; }
+    const removed = minRemoved(d);
+    if (removed.length && !(await askConfirm(`Vas a quitar ${removed.length} variante(s) de ${sku} que ya no están en la grilla (talles o colores destildados).\n\n¿Guardar igual?`, 'Sí, guardar', 'Volver'))) return;
+    const payload = { sku, nombre: d.nombre.trim(), categoria: d.categoria, provPred: d.provPred, proveedores: d.proveedores, cells: minCells(d) };
+    const res = await withBusy('Guardando mínimos…', () => Api.guardarMinimos(payload));
+    if (!res.ok) { if (res.code === 'DENIED') toast(res.error, 'error'); else apiFailed(res, 'No se pudo guardar. Tus datos siguen en pantalla.'); return; }
+    applyMasterUpdate(res);
+    const r = res.resumen || {};
+    toast(`${sku} guardado · ${r.nuevas || 0} nuevas, ${r.actualizadas || 0} actualizadas, ${r.quitadas || 0} quitadas`);
+    if (next) {   // queda todo igual salvo SKU y nombre: pensado para productos parecidos
+      minDraft = newMinDraft({ categoria: d.categoria, provPred: d.provPred, proveedores: [...d.proveedores], sizes: [...d.sizes], colors: [...d.colors], qty: Object.assign({}, d.qty), quickN: d.quickN });
+      renderDraft(minDraft);
+      const i = $(minDraft.id + '-sku'); if (i) i.focus();
+    } else { minDraft = newMinDraft(); renderDraft(minDraft); }
+  }
+  // Después de guardar mínimos el servidor devuelve el Maestro y los colores nuevos.
+  function applyMasterUpdate(res) {
+    loadMaster({
+      config: STATE.config, usuarios: STATE.users, categorias: STATE.categories, colores: res.colores, maestro: res.maestro,
+      proveedores: Object.values(STATE.providers).map(p => ({ codigo: p.code, nombre: p.nombre, direccion: p.direccion, zonas: p.zonas.join(', '), whatsapp: p.whatsapp }))
+    }, false);
+    if (manualDraft) renderDraft(manualDraft);
+    renderList();
+  }
+  function applyPerms() {
+    $('btn-mode-min').classList.toggle('hidden', !STATE.puedeMinimos);
+    if (!STATE.puedeMinimos && STATE.inputMode === 'min') setMode('manual');
+  }
+  function onMinField(el) {
+    const d = getDraft(el.dataset.d), f = el.dataset.mfield;
+    if (!d) return;
+    if (f === 'sku') {
+      d.sku = el.value.toUpperCase();
+      showSug(d.id + '-skusug', sugListHtml(searchProducts(el.value).map(p => ({ v: p.sku, sub: p.nombre })), 'm-pick-sku', d.id));
+      $(d.id + '-skuinfo').innerHTML = minSkuInfoHtml(d);
+    } else if (f === 'copyFrom') {
+      showSug(d.id + '-copysug', sugListHtml(searchProducts(el.value, true).map(p => ({ v: p.sku, sub: p.nombre })), 'm-pick-copy', d.id));
+    } else if (f === 'provIn') {
+      showSug(d.id + '-provsug', sugListHtml(searchProviders(el.value).map(p => ({ v: p.code, sub: [p.nombre !== p.code ? p.nombre : '', p.zonas.join(', ')].filter(Boolean).join(' · ') })), 'm-pick-prov', d.id));
+    } else if (f === 'nombre') d.nombre = el.value;
+    else if (f === 'rFrom' || f === 'rTo' || f === 'rStep') d[f] = el.value.replace(/\D/g, '');
+  }
+
   /* ---------- 9. MODO / PANEL ---------- */
   function setMode(mode) {
     STATE.inputMode = mode;
@@ -1351,8 +1628,10 @@
     const off = 'flex-1 px-3 py-2 rounded-lg text-sm font-bold transition-all text-slate-400 hover:text-white';
     $('btn-mode-manual').className = mode === 'manual' ? on : off;
     $('btn-mode-photo').className = mode === 'photo' ? on : off;
+    $('btn-mode-min').className = (mode === 'min' ? on : off) + (STATE.puedeMinimos ? '' : ' hidden');
     $('manual-mode-panel').classList.toggle('hidden', mode !== 'manual');
     $('photo-mode-panel').classList.toggle('hidden', mode !== 'photo');
+    $('min-mode-panel').classList.toggle('hidden', mode !== 'min');
   }
   function setPanelVisible(v) {
     STATE.panelVisible = v;
@@ -1373,6 +1652,23 @@
       case 'pick-photo': $('camera-input').click(); break;
       case 'demo-photo': loadDemoPhoto(); break;
       case 'confirm-photo': confirmPhoto(); break;
+
+      case 'm-save': saveMin(false); break;
+      case 'm-save-next': saveMin(true); break;
+      case 'm-reset': {
+        if (minHasData(minDraft) && !(await askConfirm('¿Limpiar todo lo que armaste en esta pantalla?', 'Sí, limpiar', 'Volver'))) break;
+        minDraft = newMinDraft(); renderDraft(minDraft); break;
+      }
+      case 'm-pick-sku': { d.sku = el.dataset.v; showSug(d.id + '-skusug', ''); await applyMinSku(d); break; }
+      case 'm-pick-copy': copyFromProduct(d, el.dataset.v); break;
+      case 'm-pick-prov': addMinProv(d, el.dataset.v); break;
+      case 'm-add-prov': { const inp = $(d.id + '-provin'); addMinProv(d, inp ? inp.value : ''); break; }
+      case 'm-pred': d.provPred = el.dataset.v; renderDraft(d); break;
+      case 'm-rm-prov': d.proveedores = d.proveedores.filter(x => x !== el.dataset.v); if (d.provPred === el.dataset.v) d.provPred = d.proveedores[0] || ''; renderDraft(d); break;
+      case 'm-toggle-varios': d.colors = d.colors.includes(VARIOS) ? d.colors.filter(x => x !== VARIOS) : d.colors.concat(VARIOS); renderDraft(d); break;
+      case 'm-preset': { const [a, b, s] = el.dataset.v.split('-'); addMinRange(d, a, b, s); break; }
+      case 'm-range-add': addMinRange(d, d.rFrom, d.rTo, d.rStep); break;
+      case 'm-clear-sizes': d.sizes = []; renderDraft(d); break;
 
       case 'toggle-size': {
         const t = el.dataset.v;
@@ -1583,10 +1879,12 @@
     if (!el.dataset) return;
     if (el.dataset.cell) onCellInput(el);
     else if (el.dataset.field) onFieldInput(el);
+    else if (el.dataset.mfield) onMinField(el);
   });
   document.addEventListener('change', e => {
     const el = e.target;
-    if (el.dataset && el.dataset.field) onFieldChange(el);
+    if (el.dataset && el.dataset.mfield === 'sku') { const d = getDraft(el.dataset.d); if (d) setTimeout(() => { if (minDraft === d) applyMinSku(d); }, 200); }
+    else if (el.dataset && el.dataset.field) onFieldChange(el);
     else if (el.dataset && el.dataset.filter) { STATE.filters[el.dataset.filter] = el.value; renderList(); }
     else if (el.id === 'camera-input') { toast('La lectura con IA se conecta en la Fase 3. Por ahora usá el ejemplo.', 'info'); el.value = ''; }
   });
@@ -1594,10 +1892,10 @@
     const el = e.target;
     if (e.key === 'Enter' && el.dataset) {
       if (el.dataset.enter) { e.preventDefault(); handleAction(el.dataset.enter, el); }
-      else if (el.dataset.field === 'sku' || el.dataset.field === 'provider') { e.preventDefault(); el.blur(); }
+      else if (el.dataset.field === 'sku' || el.dataset.field === 'provider' || el.dataset.mfield === 'sku') { e.preventDefault(); el.blur(); }
     }
     if (e.key === 'Escape') {
-      [manualDraft, ...photoDrafts].forEach(d => { if (d && d.fullscreen) { d.fullscreen = false; renderDraft(d); } });
+      [manualDraft, minDraft, ...photoDrafts].forEach(d => { if (d && d.fullscreen) { d.fullscreen = false; renderDraft(d); } });
     }
   });
 
@@ -1670,7 +1968,7 @@
   async function logout() {
     const d = manualDraft;
     if (d && (hasQty(d) || normText(d.sku)) && !(await askConfirm('Hay una carga sin guardar.\n¿Salir igual y descartarla?', 'Sí, salir', 'Volver'))) return;
-    Store.clear(); STATE.token = ''; STATE.cards = []; manualDraft = null; photoDrafts = [];
+    Store.clear(); STATE.token = ''; STATE.cards = []; manualDraft = null; minDraft = null; photoDrafts = [];
     showLogin();
   }
 
@@ -1685,13 +1983,14 @@
     }
     if (r.user) STATE.employee = r.user;
     loadMaster(r, first);
+    STATE.puedeMinimos = !!r.puedeMinimos;
     applyBrand(STATE.config.NOMBRE_NEGOCIO, STATE.config.SUCURSAL);
     setCards(r.cards);
     return true;
   }
   async function refreshAll(manual) {
     if (STATE.busy || !STATE.token) return;
-    if (await withBusy('Actualizando…', () => loadAll(false))) { renderDraft(manualDraft); renderList(); if (manual) toast('Actualizado', 'info'); }
+    if (await withBusy('Actualizando…', () => loadAll(false))) { applyPerms(); renderDraft(manualDraft); if (minDraft) renderDraft(minDraft); renderList(); if (manual) toast('Actualizado', 'info'); }
   }
   async function refreshCards() {   // chequeo liviano en segundo plano (solo las tarjetas)
     if (STATE.busy || !STATE.token || document.hidden) return;
@@ -1712,10 +2011,13 @@
     $('employee-name').textContent = STATE.employee;
     $('data-source-badge').textContent = (Api.mode() === 'local' ? 'Datos de prueba' : 'Base Sheets') + (STATE.config.SUCURSAL ? ' · ' + STATE.config.SUCURSAL : '');
     manualDraft = newDraft('manual');
+    minDraft = newMinDraft();
     photoDrafts = [];
+    applyPerms();
     setMode('manual');
     setPanelVisible(false);   // al abrir, la Lista final es lo primero
     renderDraft(manualDraft);
+    renderDraft(minDraft);
     renderPhoto();
     renderList();
   }
