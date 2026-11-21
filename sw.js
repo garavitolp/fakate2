@@ -3,7 +3,7 @@
      Si no hay señal, abre la última copia guardada.
    - Íconos, manifiesto y Tailwind se guardan para abrir rápido.
    - Los pedidos a Apps Script (datos) NUNCA se guardan: siempre van al servidor. */
-const VERSION = 'fakate-v5-2026-11-21';
+const VERSION = 'fakate-v6-2026-11-21';
 const SHELL = ['./', 'index.html', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];
 
 self.addEventListener('install', e => {

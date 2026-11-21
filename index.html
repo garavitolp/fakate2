@@ -308,6 +308,42 @@
     return t;
   }
   const LETTERS = ['XS', 'S', 'M', 'L', 'XL', 'XXL', '3XL', '4XL', 'ÚNICO'];
+  // Celda "Talle" del Maestro: un talle (8), una lista (38,40,42), un rango (4-16 x2, 1 al 10, S-XL) o TODOS.
+  // Devuelve { kind: 'one' | 'range' | 'all', sizes } o null si está vacía.
+  function parseSizeSpec(raw) {
+    const s = normText(raw);
+    if (!s) return null;
+    if (s === 'TODOS' || s === 'TODAS' || s === 'TODO') return { kind: 'all', sizes: [] };
+    const parts = s.split(/\s*[,;]\s*/).filter(Boolean);
+    let isRange = parts.length > 1;
+    const out = [];
+    parts.forEach(part => {
+      const r = parseSizeRange(part);
+      if (r) { isRange = true; r.forEach(t => out.push(t)); } else out.push(normSize(part));
+    });
+    const sizes = [...new Set(out.filter(Boolean))];
+    if (!sizes.length) return null;
+    return { kind: isRange ? 'range' : 'one', sizes };
+  }
+  function parseSizeRange(part) {
+    let txt = part, step = 1;
+    const m = txt.match(/^(.*?)\s*(?:X|DE A|DE)\s*(\d+)(?:\s*EN\s*\d+)?$/);
+    if (m && /-|\sAL?\s/.test(m[1])) { txt = m[1]; step = Math.max(1, Number(m[2])); }
+    const ends = txt.split(/\s*-\s*|\s+AL?\s+/);
+    if (ends.length !== 2) return null;
+    const a = normSize(ends[0]), b = normSize(ends[1]);
+    if (/^\d+$/.test(a) && /^\d+$/.test(b)) {
+      let lo = Number(a), hi = Number(b);
+      if (lo > hi) [lo, hi] = [hi, lo];
+      if ((hi - lo) / step > 60) return null;
+      const r = [];
+      for (let t = lo; t <= hi; t += step) r.push(String(t));
+      return r;
+    }
+    const ia = LETTERS.indexOf(a), ib = LETTERS.indexOf(b);
+    if (ia >= 0 && ib >= 0) return LETTERS.slice(Math.min(ia, ib), Math.max(ia, ib) + 1);
+    return null;
+  }
   const SIZE_GROUPS = [
     ['Más usados', Array.from({ length: 18 }, (_, i) => String(i + 1))],
     ['Camisa / Pantalón', ['34', '36', '38', '40', '42', '44', '46', '48', '50', '52', '54', '56', '58', '60']],
@@ -509,14 +545,33 @@
       if (!sku) return;
       const p = STATE.products[sku] || (STATE.products[sku] = {
         sku, nombre: String(row.nombre || '').trim() || sku, categoria: normText(row.categoria),
-        proveedores: [], provPred: '', variants: [], varios: {}, sizes: [], colors: [], hasMin: false
+        proveedores: [], provPred: '', variants: [], varios: {}, sizes: [], colors: [], hasMin: false, usesRanges: false, _rows: []
       });
       splitList(row.proveedores).forEach(c => { if (!p.proveedores.includes(c)) p.proveedores.push(c); });
       if (normText(row.provPred)) p.provPred = normText(row.provPred);
-      const color = normText(row.color), talle = normSize(row.talle);
-      if (color === VARIOS) { const mv = toNumOrNull(row.stockMinimo); if (talle && mv !== null) p.varios[talle] = mv; return; }
-      if (color && talle && !p.variants.some(v => v.color === color && v.talle === talle))
-        p.variants.push({ color, talle, min: toNumOrNull(row.stockMinimo) });
+      const color = normText(row.color), spec = parseSizeSpec(row.talle), min = toNumOrNull(row.stockMinimo);
+      if (!color || !spec) return;
+      if (color === VARIOS && min === null) return;
+      p._rows.push({ color, spec, min });
+    });
+    // Rangos y TODOS: una fila con talle puntual le gana a un rango, y un rango le gana a TODOS.
+    Object.values(STATE.products).forEach(p => {
+      const known = new Set();
+      p._rows.forEach(r => { if (r.spec.kind !== 'all') r.spec.sizes.forEach(t => known.add(t)); });
+      const best = {};
+      p._rows.forEach(r => {
+        const lvl = r.spec.kind === 'one' ? 0 : r.spec.kind === 'range' ? 1 : 2;
+        if (lvl) p.usesRanges = true;
+        (r.spec.kind === 'all' ? [...known] : r.spec.sizes).forEach(t => {
+          const k = key(t, r.color);
+          if (!best[k] || lvl < best[k].lvl) best[k] = { color: r.color, talle: t, min: r.min, lvl };
+        });
+      });
+      Object.values(best).forEach(b => {
+        if (b.color === VARIOS) p.varios[b.talle] = b.min;
+        else p.variants.push({ color: b.color, talle: b.talle, min: b.min });
+      });
+      delete p._rows;
     });
     Object.values(STATE.products).forEach(p => {
       p.variants.forEach(v => { if (!STATE.colorCatalog.includes(v.color)) STATE.colorCatalog.push(v.color); });
@@ -1428,7 +1483,8 @@
     if (!sku) return '';
     if (sku !== d.appliedSku) return `<div class="text-[11px] text-slate-400">Tocá una sugerencia o presioná Enter para buscar el SKU.</div>`;
     return d.existing
-      ? `<span class="${C.badge} bg-amber-500/10 border-amber-500 text-amber-300">✏ Producto existente: se actualizan sus mínimos</span>`
+      ? `<span class="${C.badge} bg-amber-500/10 border-amber-500 text-amber-300">✏ Producto existente: se actualizan sus mínimos</span>` +
+        ((STATE.products[sku] || {}).usesRanges ? `<div class="mt-1 text-[11px] text-slate-400">En el Sheet usa rangos o TODOS (ej. 4-16 x2). Si guardás desde acá, se guarda talle por talle (mismo resultado, más filas).</div>` : '')
       : `<span class="${C.badge} bg-emerald-900/40 border-emerald-600 text-emerald-300">＋ Producto nuevo</span>`;
   }
   function minProvHtml(d) {
