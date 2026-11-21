@@ -93,6 +93,20 @@
       .print-border { border-color: #ddd !important; }
       .print-tag { border: 1px solid #999 !important; background: transparent !important; color: black !important; }
     }
+    /* Modo visor: genera imágenes 4:5 (1080×1350) para WhatsApp */
+    #viewer { position: fixed; inset: 0; z-index: 250; background: #1f2937; color: #fff; overflow-y: auto; -webkit-overflow-scrolling: touch; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
+    #viewer .vw-bar { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 8px; background: #0b0f19; border-bottom: 1px solid #1e293b; }
+    #viewer .vw-btn { padding: 8px 12px; border-radius: 10px; background: #1e293b; color: #f8fafc; font-weight: 800; font-size: 14px; border: 1px solid #334155; }
+    #viewer .vw-btn.on { background: #2563eb; border-color: #60a5fa; }
+    #viewer .vw-send { display: flex; gap: 6px; width: 100%; }
+    #viewer .vw-send .vw-btn { flex: 1; }
+    #viewer .vw-go { background: #059669; border-color: #34d399; }
+    #viewer .vw-size { color: #cbd5e1; font-weight: 800; font-size: 13px; min-width: 2.2em; text-align: center; }
+    #viewer .vw-pages { padding: 10px 10px 40px; max-width: 560px; margin: 0 auto; }
+    #viewer .vw-page { margin-bottom: 14px; }
+    #viewer .vw-pnum { font-size: 12px; font-weight: 800; color: #cbd5e1; margin-bottom: 4px; }
+    #viewer .vw-page img { display: block; width: 100%; height: auto; aspect-ratio: 4 / 5; border-radius: 6px; box-shadow: 0 6px 20px rgba(0,0,0,.45); background: #fff; }
+    #viewer .vw-hint { font-size: 12px; color: #94a3b8; text-align: center; padding: 4px 8px; }
   </style>
 </head>
 <body class="min-h-screen p-2 sm:p-4 pb-24">
@@ -173,7 +187,10 @@
     <div class="no-print bg-navy-card border border-navy-border rounded-xl p-3 mb-4 shadow-lg">
       <div class="flex items-center justify-between gap-2">
         <h1 class="text-xl font-black text-white uppercase tracking-tighter">Lista final <span id="list-count" class="text-xs font-bold text-slate-500 normal-case tracking-normal"></span></h1>
-        <button type="button" data-act="print" class="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow transition shrink-0">🖨 Imprimir / PDF</button>
+        <div class="flex items-center gap-1.5 shrink-0">
+          <button type="button" data-act="viewer-open" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow transition">📲 Visor</button>
+          <button type="button" data-act="print" class="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow transition">🖨 Imprimir</button>
+        </div>
       </div>
       <div class="flex items-center gap-2 mt-2">
         <div class="flex items-center bg-slate-900 rounded-lg p-0.5 border border-slate-800 shrink-0">
@@ -230,6 +247,9 @@
     <div id="boot-msg" class="text-sm font-bold text-slate-300 max-w-xs"></div>
     <button type="button" id="boot-retry" data-act="boot-retry" class="hidden mt-5 px-6 py-3 rounded-xl bg-slate-700 hover:bg-slate-600 text-white font-black text-sm">Reintentar</button>
   </div>
+
+  <!-- Modo visor: lista limpia y con letra grande para captura de pantalla -->
+  <div id="viewer" class="no-print hidden"></div>
 
   <!-- Barra de "guardando…" -->
   <div id="busy-bar" class="no-print hidden fixed top-0 inset-x-0 z-[350] bg-blue-600 text-white text-xs font-black text-center py-1.5 animate-pulse"></div>
@@ -1677,6 +1697,267 @@
     else if (f === 'rFrom' || f === 'rTo' || f === 'rStep') d[f] = el.value.replace(/\D/g, '');
   }
 
+  /* ---------- 8b. MODO VISOR: imágenes 4:5 (como una publicación de Instagram) para WhatsApp ---------- */
+  // Arma páginas de 1080 × 1350 px con solo lo que sirve en la calle: tipo, artículo, talles/colores/cantidades,
+  // proveedor con dirección, fecha (y, si se quiere, los proveedores alternativos en chico).
+  // Una tarjeta nunca se corta entre dos imágenes (salvo que sola no entre en una página entera).
+  // Respeta los filtros de la lista. Tamaño, agrupación y "alternativos" se recuerdan en cada celular.
+  const VIEWER_KEY = 'fakate_viewer_v1';
+  const VIEWER = { open: false, size: 22, group: 'PROV', alts: false, pages: [], blobs: [] };
+  try {
+    const v = JSON.parse(localStorage.getItem(VIEWER_KEY) || 'null');
+    if (v) { if (v.size >= 14 && v.size <= 48) VIEWER.size = v.size; if (v.group === 'CAT') VIEWER.group = 'CAT'; VIEWER.alts = v.alts === true; }
+  } catch (e) { /* nada */ }
+  function saveViewerPrefs() { try { localStorage.setItem(VIEWER_KEY, JSON.stringify({ size: VIEWER.size, group: VIEWER.group, alts: VIEWER.alts })); } catch (e) { /* nada */ } }
+  const shortDate = iso => { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' }); };
+  function viewerCards() {
+    return STATE.cards.filter(c => c.estado === 'ACTIVA' && cardMatches(c, STATE.filters) && activeEntries(c).length);
+  }
+  function provText(code, withTel) {
+    const p = STATE.providers[code];
+    if (!p) return code;
+    return [p.nombre, p.direccion, withTel && p.whatsapp ? 'Tel ' + p.whatsapp : ''].filter(Boolean).join(' — ');
+  }
+  function altProviders(c) {
+    const p = STATE.products[c.sku];
+    return p ? p.proveedores.filter(x => x !== c.provider) : [];
+  }
+
+  // --- Dibujo en canvas ---
+  const IMG_W = 1080, IMG_H = 1350, IMG_PAD = 56;
+  const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif';
+  const fontOf = (px, w, it) => `${it ? 'italic ' : ''}${w} ${Math.round(px)}px ${FONT}`;
+  let measureCtx = null;
+  function mctx() { if (!measureCtx) measureCtx = document.createElement('canvas').getContext('2d'); return measureCtx; }
+  // Texto con partes de distinto peso que se corta en renglones según el ancho. Devuelve renglones listos para dibujar.
+  function wrapRich(segs, maxW, px) {
+    const ctx = mctx(), lines = [];
+    let cur = [], curW = 0;
+    const push = () => { lines.push(cur); cur = []; curW = 0; };
+    segs.forEach(sg => {
+      ctx.font = fontOf(px * (sg.k || 1), sg.w || 400, sg.it);
+      String(sg.t).split(/(\s+)/).filter(x => x !== '').forEach(word => {
+        const isSp = /^\s+$/.test(word);
+        let ww = ctx.measureText(word).width;
+        if (isSp && !cur.length) return;
+        if (!isSp && curW + ww > maxW && cur.length) { push(); }
+        if (!isSp && ww > maxW) {   // palabra más larga que el renglón: se corta por letras
+          let part = '';
+          for (const ch of word) { if (ctx.measureText(part + ch).width > maxW && part) { cur.push(Object.assign({}, sg, { t: part, x: curW })); push(); part = ''; } part += ch; }
+          word = part; ww = ctx.measureText(word).width;
+        }
+        cur.push(Object.assign({}, sg, { t: word, x: curW })); curW += ww;
+      });
+    });
+    if (cur.length) push();
+    return lines;
+  }
+  // Un "renglón" dibujable: { h, draw(ctx, x, y) }
+  function textRows(segs, maxW, px, lh, color) {
+    const k = Math.max(...segs.map(s => s.k || 1));
+    return wrapRich(segs, maxW, px).map(line => ({
+      h: px * k * lh,
+      draw(ctx, x, y) {
+        line.forEach(sg => { ctx.font = fontOf(px * (sg.k || 1), sg.w || 400, sg.it); ctx.fillStyle = sg.c || color || '#000'; ctx.fillText(sg.t, x + sg.x, y + px * k * (lh - 1) / 2 + px * k * 0.82); });
+      }
+    }));
+  }
+  const gapRow = h => ({ h, draw() {} });
+  function groupBlock(title, sub, px, maxW, small) {
+    const inner = maxW - px * 0.9;
+    const rows = textRows([{ t: title, w: 900, k: small ? 0.8 : 1.1, c: '#fff' }], inner, px, 1.15)
+      .concat(sub ? textRows([{ t: sub, w: 500, k: 0.74, c: '#e5e5e5' }], inner, px, 1.25) : []);
+    const padY = px * 0.2, h = rows.reduce((s, r) => s + r.h, 0) + padY * 2;
+    return { kind: 'group', h: h + px * 0.25, rows: [{
+      h: h + px * 0.25,
+      draw(ctx, x, y) {
+        ctx.fillStyle = '#000'; roundRect(ctx, x, y + px * 0.15, maxW, h, px * 0.25); ctx.fill();
+        let yy = y + px * 0.15 + padY; rows.forEach(r => { r.draw(ctx, x + px * 0.45, yy); yy += r.h; });
+      }
+    }] };
+  }
+  function roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+  }
+  // Colores de categoría: distintos del verde (FALTA) y del violeta (STOCK)
+  const CAT_COLORS = { HOMBRE: '#1d4ed8', DAMA: '#be185d', KIDS: '#c2410c', BEBE: '#0e7490', LENCERIA: '#b91c1c', BLANQUERIA: '#475569' };
+  const CAT_EXTRA = ['#92400e', '#1e3a8a', '#9d174d', '#3f6212', '#0f766e'];
+  function catColor(cat) {
+    const k = stripAccents(normText(cat));
+    if (CAT_COLORS[k]) return CAT_COLORS[k];
+    let h = 0; for (const ch of k) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    return CAT_EXTRA[h % CAT_EXTRA.length];
+  }
+  function cardBlock(c, withProv, px, maxW) {
+    const view = cardView(c), tipo = view === 'FALTA' ? 'FALTA' : 'STOCK';
+    const rows = [gapRow(px * 0.22)];
+    rows.push(...textRows([{ t: cardTitle(c).toUpperCase(), w: 900, k: 1.05 }], maxW, px, 1.1));
+    // Fila: [TIPO a color] fecha chica ............................ CATEGORÍA (a la derecha)
+    const mk = 0.74, ctx = mctx();
+    const tipoTxt = tipo === 'FALTA' ? 'FALTA' : 'STOCK';
+    const tipoBg = tipo === 'FALTA' ? '#047857' : '#6d28d9';   // verde = hay que traer · violeta = lo que hay (mismos colores que la app)
+    ctx.font = fontOf(px * mk, 900); const tw = ctx.measureText(tipoTxt).width;
+    const fecha = shortDate(c.createdAt);
+    rows.push({
+      h: px * mk * 1.65,
+      draw(ctx, x, y) {
+        const bh = px * mk * 1.35, by = y + px * mk * 0.1, base = by + bh * 0.74;
+        ctx.fillStyle = tipoBg; roundRect(ctx, x, by, tw + px * 0.55, bh, px * 0.18); ctx.fill();
+        ctx.font = fontOf(px * mk, 900); ctx.fillStyle = '#fff'; ctx.fillText(tipoTxt, x + px * 0.275, base);
+        let fx = x + tw + px * 0.85;
+        ctx.font = fontOf(px * 0.5, 600); ctx.fillStyle = '#888'; ctx.fillText(fecha, fx, base);
+        fx += ctx.measureText(fecha).width + px * 0.4;
+        // categoría: etiqueta a color a la derecha (un color fijo por categoría)
+        let cat = c.category || '';
+        if (cat) {
+          ctx.font = fontOf(px * mk, 900);
+          while (cat.length > 1 && ctx.measureText(cat).width + px * 0.55 > x + maxW - fx) cat = cat.slice(0, -2) + '…';
+          const cw = ctx.measureText(cat).width + px * 0.55, cx = x + maxW - cw;
+          ctx.fillStyle = catColor(c.category); roundRect(ctx, cx, by, cw, bh, px * 0.18); ctx.fill();
+          ctx.fillStyle = '#fff'; ctx.fillText(cat, cx + px * 0.275, base);
+        }
+      }
+    });
+    formatLines(activeEntries(c), c.groupBy || STATE.viewMode).forEach(l => {
+      rows.push(...textRows([{ t: l.label + ': ', w: 900 }, { t: l.text, w: 400 }], maxW, px, 1.2));
+    });
+    if (withProv) rows.push(...textRows([{ t: 'Proveedor: ', w: 800, k: 0.8 }, { t: c.provider ? provText(c.provider, true) : 'sin proveedor', w: 400, k: 0.8 }], maxW, px, 1.3));
+    if (VIEWER.alts) {
+      const alts = altProviders(c);
+      if (alts.length) rows.push(...textRows([{ t: 'También en: ', w: 800, k: 0.66, c: '#333' }, { t: alts.map(a => provText(a, false)).join(' · '), w: 400, k: 0.66, c: '#333' }], maxW, px, 1.3));
+    }
+    if (c.comment) rows.push(...textRows([{ t: 'Nota: ' + c.comment, w: 400, k: 0.8, it: true }], maxW, px, 1.3));
+    rows.push({ h: px * 0.32, draw(ctx, x, y) { ctx.fillStyle = '#bbb'; ctx.fillRect(x, y + px * 0.2, maxW, Math.max(2, px * 0.05)); } });
+    return { kind: 'card', id: c.id, sku: c.sku, rows, h: rows.reduce((s, r) => s + r.h, 0) };
+  }
+  // Reparte los bloques en páginas sin cortar tarjetas
+  function buildViewerPages() {
+    const px = VIEWER.size * (IMG_W / 390), maxW = IMG_W - IMG_PAD * 2;
+    const headH = px * 1.45, bodyH = IMG_H - IMG_PAD * 2 - headH;
+    const list = viewerCards();
+    const catIdx = cat => { const i = STATE.categories.indexOf(cat); return i < 0 ? 999 : i; };
+    const sections = [];   // [{ title, sub, cards }]
+    if (VIEWER.group === 'PROV') {
+      const g = {};
+      list.forEach(c => { (g[c.provider || ''] = g[c.provider || ''] || []).push(c); });
+      Object.keys(g).sort((a, b) => (a === '') - (b === '') || provText(a).localeCompare(provText(b))).forEach(k => {
+        const p = STATE.providers[k];
+        sections.push({ title: k ? (p ? p.nombre : k) : 'SIN PROVEEDOR', sub: p ? [p.direccion, p.whatsapp ? 'Tel ' + p.whatsapp : ''].filter(Boolean).join(' · ') : '',
+          cards: g[k].sort((a, b) => catIdx(a.category) - catIdx(b.category) || cardTitle(a).localeCompare(cardTitle(b))), prov: false });
+      });
+    } else {
+      [...new Set(list.map(c => c.category))].sort((a, b) => catIdx(a) - catIdx(b)).forEach(cat => {
+        sections.push({ title: cat, sub: '', cards: list.filter(c => c.category === cat).sort((a, b) => cardTitle(a).localeCompare(cardTitle(b))), prov: true });
+      });
+    }
+    const pages = [];
+    let page = null, used = 0;
+    const newPage = () => { page = { items: [] }; pages.push(page); used = 0; };
+    const place = (rows, meta) => { page.items.push(Object.assign({ rows, y: used }, meta)); used += rows.reduce((s, r) => s + r.h, 0); };
+    newPage();
+    sections.forEach(sec => {
+      const hdr = () => groupBlock(sec.title, sec.sub, px, maxW), hdrMore = () => groupBlock(sec.title + ' (sigue)', '', px, maxW, true);
+      let first = true;
+      sec.cards.forEach(c => {
+        const cb = cardBlock(c, sec.prov, px, maxW), gb = first ? hdr() : null;
+        const need = cb.h + (gb ? gb.h : 0);
+        if (used + need > bodyH && used > 0) { newPage(); if (!first) { const m = hdrMore(); place(m.rows, { kind: 'group' }); } }
+        if (gb) place(gb.rows, { kind: 'group' });
+        first = false;
+        if (used + cb.h <= bodyH) { place(cb.rows, { kind: 'card', id: cb.id, sku: cb.sku }); return; }
+        // tarjeta más alta que una página entera: se corta por renglones
+        let chunk = [], chunkH = 0, part = 0;
+        cb.rows.forEach(r => {
+          if (used + chunkH + r.h > bodyH && chunk.length) {
+            place(chunk, { kind: 'card', id: cb.id, sku: cb.sku, split: ++part }); chunk = []; chunkH = 0;
+            newPage(); const m = hdrMore(); place(m.rows, { kind: 'group' });
+          }
+          chunk.push(r); chunkH += r.h;
+        });
+        if (chunk.length) place(chunk, { kind: 'card', id: cb.id, sku: cb.sku, split: ++part });
+      });
+    });
+    if (pages.length && !pages[pages.length - 1].items.length) pages.pop();
+    return { pages, px, headH };
+  }
+  function drawViewerPage(pg, n, total, px, headH) {
+    const cv = document.createElement('canvas'); cv.width = IMG_W; cv.height = IMG_H;
+    const ctx = cv.getContext('2d');
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, IMG_W, IMG_H);
+    const neg = STATE.config.NOMBRE_NEGOCIO || 'FAKATE', fecha = shortDate(new Date().toISOString()), num = total > 1 ? `${n}/${total}` : '';
+    const hp = px * 0.78;
+    // fecha chica y gris; número de imagen apenas más grande y más oscuro
+    ctx.font = fontOf(px * 0.62, 800); const nw = num ? ctx.measureText(num).width : 0;
+    ctx.fillStyle = '#555'; if (num) ctx.fillText(num, IMG_W - IMG_PAD - nw, IMG_PAD + hp);
+    ctx.font = fontOf(px * 0.5, 600); const fw = ctx.measureText(fecha).width, gap = num ? px * 0.45 : 0;
+    ctx.fillStyle = '#888'; ctx.fillText(fecha, IMG_W - IMG_PAD - nw - gap - fw, IMG_PAD + hp);
+    const rw = nw + gap + fw;
+    ctx.font = fontOf(hp, 800); ctx.fillStyle = '#333';
+    let left = neg + ' · Lista de compras';
+    while (ctx.measureText(left).width > IMG_W - IMG_PAD * 2 - rw - hp && left.length > 4) left = left.slice(0, -2) + '…';
+    ctx.fillText(left, IMG_PAD, IMG_PAD + hp);
+    ctx.fillStyle = '#000'; ctx.fillRect(IMG_PAD, IMG_PAD + hp * 1.45, IMG_W - IMG_PAD * 2, Math.max(3, px * 0.07));
+    const top = IMG_PAD + headH;
+    pg.items.forEach(it => { let y = top + it.y; it.rows.forEach(r => { r.draw(ctx, IMG_PAD, y); y += r.h; }); });
+    return cv;
+  }
+  function renderViewer() {
+    const box = $('viewer');
+    if (!VIEWER.open) return;
+    const { pages, px, headH } = buildViewerPages();
+    VIEWER.pages = pages.map(p => p.items.filter(i => i.kind === 'card').map(i => i.sku + (i.split ? '#' + i.split : '')));
+    VIEWER.canvases = pages.map((p, i) => drawViewerPage(p, i + 1, pages.length, px, headH));
+    const canShare = !!(navigator.canShare && window.File);
+    box.innerHTML = `<div class="vw-bar">
+        <button type="button" class="vw-btn" data-act="viewer-size" data-delta="-2">A−</button>
+        <span class="vw-size">${VIEWER.size}</span>
+        <button type="button" class="vw-btn" data-act="viewer-size" data-delta="2">A+</button>
+        <button type="button" class="vw-btn ${VIEWER.group === 'PROV' ? 'on' : ''}" data-act="viewer-group" data-v="PROV">Por proveedor</button>
+        <button type="button" class="vw-btn ${VIEWER.group === 'CAT' ? 'on' : ''}" data-act="viewer-group" data-v="CAT">Por categoría</button>
+        <button type="button" class="vw-btn ${STATE.viewMode === 'COLOR' ? 'on' : ''}" data-act="viewer-mode" data-v="COLOR">Color</button>
+        <button type="button" class="vw-btn ${STATE.viewMode === 'TALLE' ? 'on' : ''}" data-act="viewer-mode" data-v="TALLE">Talle</button>
+        <button type="button" class="vw-btn ${VIEWER.alts ? 'on' : ''}" data-act="viewer-alts">${VIEWER.alts ? '☑' : '☐'} Prov. alternativos</button>
+        <button type="button" class="vw-btn" data-act="viewer-close" style="margin-left:auto">✕ Cerrar</button>
+        <div class="vw-send">
+          ${canShare ? `<button type="button" class="vw-btn vw-go" data-act="viewer-share">📤 Enviar ${pages.length} imagen${pages.length === 1 ? '' : 'es'}</button>` : ''}
+          <button type="button" class="vw-btn" data-act="viewer-save">⬇ Guardar en el celular</button>
+        </div>
+      </div>
+      <div class="vw-pages">${VIEWER.canvases.map((cv, i) => `<div class="vw-page"><div class="vw-pnum">Imagen ${i + 1} de ${pages.length}</div><img alt="Lista ${i + 1}" src="${cv.toDataURL('image/png')}"></div>`).join('')}
+        <div class="vw-hint">Las imágenes tienen el formato de una publicación de Instagram (4:5) y ninguna tarjeta queda cortada. También podés mantener apretada una imagen para guardarla.</div></div>`;
+  }
+  function viewerFiles() {
+    const d = new Date(), p = x => String(x).padStart(2, '0');
+    const base = `${(STATE.config.NOMBRE_NEGOCIO || 'FAKATE').replace(/[^\w-]+/g, '_')}_lista_${p(d.getDate())}-${p(d.getMonth() + 1)}`;
+    return Promise.all((VIEWER.canvases || []).map((cv, i, a) => new Promise(res => cv.toBlob(b => res(new File([b], `${base}_${i + 1}de${a.length}.png`, { type: 'image/png' })), 'image/png'))));
+  }
+  async function shareViewer() {
+    const files = await viewerFiles();
+    if (!(navigator.canShare && navigator.canShare({ files }))) { saveViewerImages(files); return; }
+    try { await navigator.share({ files, title: 'Lista de compras' }); }
+    catch (e) { if (e && e.name !== 'AbortError') { toast('No se pudo compartir: las guardo en el celular', 'info'); saveViewerImages(files); } }
+  }
+  async function saveViewerImages(files) {
+    files = files || await viewerFiles();
+    files.forEach((f, i) => setTimeout(() => {
+      const a = document.createElement('a'); a.href = URL.createObjectURL(f); a.download = f.name;
+      document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000);
+    }, i * 400));
+    toast(`${files.length} imagen(es) guardadas en Descargas`, 'ok');
+  }
+  function openViewer() {
+    if (!viewerCards().length) { toast('No hay productos para mostrar con los filtros elegidos', 'info'); return; }
+    VIEWER.open = true;
+    STATE.cards.forEach(c => { c.groupBy = null; });   // en el visor manda el botón Color / Talle
+    $('viewer').classList.remove('hidden'); document.body.style.overflow = 'hidden';
+    renderViewer(); $('viewer').scrollTop = 0;
+  }
+  function closeViewer() {
+    VIEWER.open = false; VIEWER.canvases = []; $('viewer').classList.add('hidden'); $('viewer').innerHTML = '';
+    syncBodyScroll(); renderList();
+  }
+
   /* ---------- 9. MODO / PANEL ---------- */
   function setMode(mode) {
     STATE.inputMode = mode;
@@ -1877,6 +2158,14 @@
       case 'toggle-trash': STATE.showTrash = !STATE.showTrash; renderList(); break;
       case 'toggle-filters': $('filters-box').classList.toggle('hidden'); break;
       case 'print': printList(); break;
+      case 'viewer-open': openViewer(); break;
+      case 'viewer-close': closeViewer(); break;
+      case 'viewer-size': VIEWER.size = Math.min(48, Math.max(14, VIEWER.size + Number(el.dataset.delta))); saveViewerPrefs(); renderViewer(); break;
+      case 'viewer-group': VIEWER.group = el.dataset.v; saveViewerPrefs(); renderViewer(); break;
+      case 'viewer-mode': STATE.viewMode = el.dataset.v; renderViewer(); break;
+      case 'viewer-alts': VIEWER.alts = !VIEWER.alts; saveViewerPrefs(); renderViewer(); break;
+      case 'viewer-share': shareViewer(); break;
+      case 'viewer-save': saveViewerImages(); break;
     }
   }
 
@@ -1950,6 +2239,7 @@
       if (el.dataset.enter) { e.preventDefault(); handleAction(el.dataset.enter, el); }
       else if (el.dataset.field === 'sku' || el.dataset.field === 'provider' || el.dataset.mfield === 'sku') { e.preventDefault(); el.blur(); }
     }
+    if (e.key === 'Escape' && VIEWER.open) { closeViewer(); return; }
     if (e.key === 'Escape') {
       [manualDraft, minDraft, ...photoDrafts].forEach(d => { if (d && d.fullscreen) { d.fullscreen = false; renderDraft(d); } });
     }
